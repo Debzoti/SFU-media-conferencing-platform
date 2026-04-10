@@ -1,157 +1,91 @@
-"use strict";
-var __importDefault = (this && this.__importDefault) || function (mod) {
-    return (mod && mod.__esModule) ? mod : { "default": mod };
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
 };
-Object.defineProperty(exports, "__esModule", { value: true });
 //signaling server for  peer 2 peer connections
-const express_1 = __importDefault(require("express"));
-const ws_1 = require("ws");
-const http_1 = __importDefault(require("http"));
-const ws_2 = __importDefault(require("ws"));
-const uuid_1 = __importDefault(require("uuid"));
-const app = (0, express_1.default)();
-const server = http_1.default.createServer(app);
-const wss = new ws_1.Server({ server });
+import express from 'express';
+import http from 'http';
+import { WebSocketServer } from 'ws';
+import crypto from 'crypto';
+import { handleSignallingMessege, handleDisconnect } from './signalling/handlers';
+import { initApp } from './media/mediaManager.js';
+const app = express();
+const server = http.createServer(app);
+// const __dirname = fileURLToPath(new URL('.', import.meta.url));
+// // serve client static files (if not already)
+// app.use(express.static(path.join(__dirname, '..', 'public')));
+// // explicitly serve HLS assets
+// app.use('/hls', express.static(path.join(__dirname, 'public', 'hls'), {
+//   setHeaders: (res, path) => {
+//     if (path.endsWith('.m3u8')) {
+//       res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+//     } else if (path.endsWith('.ts')) {
+//       res.setHeader('Content-Type', 'video/mp2t');
+//     }
+//   }
+// }));
+// Initialize WebSocket server
+const wss = new WebSocketServer({ server });
 app.get('/', (req, res) => {
     res.send('WebSocket signaling server is running');
 });
+initApp();
+// //test the rourte 
+// app.get('/rtp-capabilities', async (req, res) => {
+//   const cap = await getRouterRtpCapabilites();
+//   console.log(  'Router RTP Capabilities:', cap);
+//   res.json(cap);
+// });
+// //test transport creation
+// app.post('/create-transport', async (req, res) => {
+//   // In a real application, you would get the wsId from the authenticated user session
+//   const wsId = uuidv6();
+//   try {
+//     const transport = await createWebrtcTransport(wsId);
+//     console.log('Created transport:', transport);
+//     res.json(transport);
+//   } catch (error : any) {
+//     res.status(500).json({ error: error.message });
+//   }
+// });
 //manage new user joining rooms
 //each room have roomId and name
 let rooms = {};
 let socketToRoom = {}; //map to track which socket is in which room
 wss.on('connection', (ws) => {
-    ws.id = uuid_1.default.v4(); // Assign a unique ID to the WebSocket connection
-    console.log('New client connected', ws.id);
-    ws.on('message', (message) => {
-        console.log(`Received message: ${message}`);
-        // Broadcast the message to all connected clients
-        wss.clients.forEach((client) => {
-            if (client.readyState === ws_2.default.OPEN) {
-                client.send(message);
+    ws.on('message', (message) => __awaiter(void 0, void 0, void 0, function* () {
+        console.log("RAW TYPE:", typeof message);
+        console.log("RAW VALUE:", message);
+        console.log("AS STRING:", message.toString());
+        let parsedData;
+        try {
+            parsedData = message.toString();
+            //assig an id to each websocket connection
+            if (!ws.id) {
+                //assign a unique ID to the WebSocket connection
+                ws.id = crypto.randomUUID();
+                console.log('New client connected', ws.id);
             }
-        });
-    });
-    //manage new user joining rooms
-    //each room have roomId and name
-    ws.on('joinRoom', (data) => {
-        //--> let user join a room
-        console.log(`User joining room: ${data.roomId} with name: ${data.name}`);
-        if (!data.roomId || !data.name) {
-            ws.send(JSON.stringify({ error: 'Room ID and name are required' }));
-            return;
-        }
-        const { roomId, name } = data;
-        const roomIdNumber = parseInt(roomId, 10);
-        // Check if the roomId is a valid number
-        if (isNaN(roomIdNumber)) {
-            ws.send(JSON.stringify({ error: 'Invalid room ID' }));
-            return;
-        }
-        // check if the room exists, if not create and push the user
-        if (!rooms[roomIdNumber]) {
-            rooms[roomIdNumber] = [{ id: ws.id, name }];
-        }
-        else {
-            rooms[roomIdNumber].push({ id: ws.id, name });
-        }
-        //add the user to the socketToRoom map
-        socketToRoom[ws.id] = roomIdNumber;
-        // send a list of joined users to the new user
-        const users = rooms[roomIdNumber].filter(user => user.id !== ws.id);
-        ws.send(JSON.stringify({ type: 'room_users', users }));
-        //send the updated room information to the user
-        const roomInfo = {
-            roomId: roomIdNumber,
-            users: rooms[roomIdNumber].map(user => ({ id: user.id, name: user.name })),
-        };
-        ws.send(JSON.stringify({ type: 'roomInfo', roomInfo }));
-        console.log(`User ${name} joined room ${roomIdNumber}`);
-    });
-    //-->handlling SDP offers
-    ws.on('offer', (data) => {
-        const { roomId, offer } = data;
-        const roomIdNumber = parseInt(roomId, 10);
-        if (rooms[roomIdNumber]) {
-            // Broadcast the offer to all clients in the room except the sender
-            rooms[roomIdNumber].forEach(user => {
-                if (user.id !== ws.id) {
-                    const client = Array.from(wss.clients)
-                        .find(client => client.id === user.id);
-                    if (client && client.readyState === ws_2.default.OPEN) {
-                        client.send(JSON.stringify({
-                            type: 'offer',
-                            offer,
-                            from: ws.id
-                        }));
-                    }
-                }
-            });
-        }
-    });
-    //-->handle SDP answers
-    ws.on("answer", (data) => {
-        const { roomId, answer } = data;
-        const roomIdNumber = parseInt(roomId, 10);
-        if (rooms[roomIdNumber]) {
-            // Broadcast the answer to all clients in the room except the sender
-            rooms[roomIdNumber].forEach(user => {
-                if (user.id !== ws.id) {
-                    const client = Array.from(wss.clients)
-                        .find(client => client.id === user.id);
-                    if (client && client.readyState === ws_2.default.OPEN) {
-                        client.send(JSON.stringify({
-                            type: 'answer',
-                            answer,
-                            from: ws.id
-                        }));
-                    }
-                }
-            });
-        }
-    });
-    //-->handle ICE candidates
-    ws.on('candidate', (data) => {
-        const { roomId, candidate } = data;
-        const roomIdNumber = parseInt(roomId, 10);
-        if (rooms[roomIdNumber]) {
-            // Broadcast the ICE candidate to all clients in the room except the sender
-            rooms[roomIdNumber].forEach(user => {
-                if (user.id !== ws.id) {
-                    const client = Array.from(wss.clients)
-                        .find(client => client.id === user.id);
-                    if (client && client.readyState === ws_2.default.OPEN) {
-                        client.send(JSON.stringify({
-                            type: 'candidate',
-                            candidate,
-                            from: ws.id
-                        }));
-                    }
-                }
-            });
-        }
-    });
-    //--> disconnect handling
-    ws.on('disconnect', () => {
-        const roomId = socketToRoom[ws.id];
-        if (roomId && rooms[roomId]) {
-            // Remove the user from the room
-            rooms[roomId] = rooms[roomId].filter(user => user.id !== ws.id);
-            // Notify other users in the room about the disconnection
-            rooms[roomId].forEach(user => {
-                const client = Array.from(wss.clients)
-                    .find(client => client.id === user.id);
-                if (client && client.readyState === ws_2.default.OPEN) {
-                    client.send(JSON.stringify({ type: 'user_left', id: ws.id }));
-                }
-            });
-            // Clean up if the room is empty
-            if (rooms[roomId].length === 0) {
-                delete rooms[roomId];
+            else {
+                console.log('Existing client reconnected', ws.id);
             }
         }
-        console.log(`User ${ws.id} disconnected`);
+        catch (error) {
+            console.error(error);
+            return;
+        }
+        yield handleSignallingMessege(ws, wss, parsedData, rooms, socketToRoom);
+    }));
+    ws.on('close', () => {
+        handleDisconnect(ws, wss, rooms, socketToRoom);
     });
 });
+// ---> change above code ws doesnit have custom handlers like joinRoom, offer, answer, candidate, disconnect
 server.listen(3000, () => {
     console.log('Server is listening on port 3000');
 });

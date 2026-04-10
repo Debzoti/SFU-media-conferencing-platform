@@ -66,15 +66,6 @@ initApp();
 
 
 
-
-
-
-
-
-
-
-
-
 //manage new user joining rooms
   //each room have roomId and name
   let rooms: { [roomId: string]: { id: string; name: string }[] } = {}; 
@@ -104,7 +95,7 @@ wss.on('connection', (ws: WebSocket) => {
               }
 
 
-            } catch (error:any) {
+            } catch (error:any | undefined) {
               console.error(error);
               return;
             }

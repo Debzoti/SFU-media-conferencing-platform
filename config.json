@@ -1,6 +1,16 @@
 {
     "rtcMinPort": 10000,
     "rtcMaxPort": 10100,
-    "httpPort": 8080
-    
+    "httpPort": 8080,
+    "hls": {
+        "segmentDuration": 4,
+        "playlistSize": 6,
+        "videoBitrate": "1000k",
+        "videoPreset": "veryfast",
+        "gopSize": 48,
+        "audioBitrate": "128k",
+        "outputDir": "public/hls",
+        "rtpPortStart": 20000,
+        "rtpPortEnd": 20100
+    }
 }

@@ -209,7 +209,7 @@ async function produce(
         rtpParameters,
         appData: {
             wsId,
-        }
+        }       
     });
 
     //store the producer in map for cleanup later

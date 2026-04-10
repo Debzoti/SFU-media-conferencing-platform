@@ -58,7 +58,7 @@ button.addEventListener("click", async () => {
 
     //first connect your local stream to the server
     
-     ws = new WebSocket("ws://localhost:3000");
+    ws = new WebSocket("ws://localhost:3000");
     
     ws.onopen = () => {
         console.log("WebSocket connection established");
@@ -69,7 +69,7 @@ button.addEventListener("click", async () => {
         };
         ws.onmessage = async (event) => {
             const data = JSON.parse(event.data);
-           
+
             switch (data.type) {
                 case "room_users":{
                     console.log("Room users:", data.users);
