@@ -1,5 +1,2 @@
 node_modules/
-.config.kiro
-requirements.md
-design.md
-tasks.md
+.kiro/specs/hls-live-streaming/

@@ -3,7 +3,7 @@ import { FFmpegConfig } from 'src/config';
 
 class HLSTranscoder{
     //credentials
-    private process : ChildProcess | null = null;
+    private process : ChildProcess;
     private config : FFmpegConfig; //lets change later
 
     constructor(config : any){
@@ -11,7 +11,7 @@ class HLSTranscoder{
     }
 
     //start the ffmpeg arg process
-    spawn() : ChildProcess | null{
+    spawn() : ChildProcess{
         //build the ffpeg args 
         const args = this.buildFFmpegArgs();
         //execute ffmpeg
@@ -71,20 +71,19 @@ class HLSTranscoder{
 
     // Stop FFmpeg gracefully
     async terminate(): Promise<void> {
-        if (!this.process) return;
+        if (!this.process || this.process.exitCode !== null) return;
         
         return new Promise((resolve) => {
-        this.process!.on('exit', () => {
-            this.process = null;
+        this.process.on('exit', () => {
             resolve();
         });
         
         // Send graceful termination signal
-        this.process!.kill('SIGTERM');
+        this.process.kill('SIGTERM');
         
         // Force kill after 5 seconds if still running
         setTimeout(() => {
-            if (this.process) {
+            if (this.process && this.process.exitCode === null) {
             this.process.kill('SIGKILL');
             }
         }, 5000);
@@ -93,7 +92,7 @@ class HLSTranscoder{
 
     // Check if FFmpeg is running
     isRunning(): boolean {
-        return this.process !== null && this.process.exitCode === null;
+        return this.process && this.process.exitCode === null;
     }
 
     // Get exit code

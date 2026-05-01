@@ -1,5 +1,6 @@
 import {ChildProcess} from 'node:child_process';
 import {types as mediasoupTypes} from 'mediasoup';
+import { HLSTranscoder } from './media/hlsTranscoder';
 
 export interface HLSConfig {
     segmentDuration: number;
@@ -36,7 +37,9 @@ export interface StreamSession {
     producerId: string;
     plainTransport: mediasoupTypes.PlainTransport;
     ffmpegProcess: ChildProcess;
+    trancoderInstance : HLSTranscoder;
     rtpPort: number;
+    audioPort : number,
     startTime: Date;
     status: 'starting' | 'active' | 'stopping' | 'failed';
 }

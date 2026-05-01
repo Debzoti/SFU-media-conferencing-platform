@@ -10,6 +10,7 @@ import { types as mediasoupTypes,createWorker } from "mediasoup";
 
 import config from '../../config.json' ;
 import {Config} from '../config' ;
+import { StreamManager } from "./streamManager";
 
 let configData:Config = config as Config;
 
@@ -26,7 +27,7 @@ const transports:Map<string,mediasoupTypes.WebRtcTransport> = new Map();
 const producers:Map<string,mediasoupTypes.Producer<mediasoupTypes.AppData>> = new Map();
 const producerOwner:Map<string,string> = new Map(); //map producer id to socket id  
 const peerTransports:Map<string,string[]> = new Map(); //map socket id to transport id
-
+const producerRoom : Map<mediasoupTypes.Producer, string> = new Map();
 /*
 
                         +--------------------+
