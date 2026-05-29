@@ -8,11 +8,13 @@
 
 import { types as mediasoupTypes,createWorker } from "mediasoup";
 
-import config from '../../config.json' ;
-import {Config} from '../config' ;
+import config from 'src/config/config.json' ;
+import {Config, HLSStreamAvailableMessege, HLSUnavailable} from 'src/config/config' ;
 import { StreamManager } from "./streamManager";
 import { HLSTranscoder } from "./hlsTranscoder";
-
+import { broadcastToRoom } from "src/signalling/handlers";
+import { WebSocketServer } from "ws";
+import { env } from "src/config/binding";
 let configData:Config = config as Config;
 
 //media manager will handle all the media related tasks
@@ -205,7 +207,9 @@ async function produce(
     transportId:string,
     rtpParameters:mediasoupTypes.RtpParameters, 
     kind:mediasoupTypes.MediaKind,
-    roomId: string
+    roomId: string,
+    wss : WebSocketServer,
+    rooms : {[roomId: string] : {id : string, name: string}[]}
 ){
     const transport = transports.get(transportId); //get the transportid from map
     if(!transport){
@@ -240,11 +244,20 @@ async function produce(
         try {
             await streamManager.startHLSStream(roomId,producer,router);
             console.log(`started HLS for room - ${roomId}`);
+
             
         } catch (error) {
             console.log(`failed to start Hls for room - ${roomId}`);
             
         }
+        //TODO : brioadcast to all peeers in that room
+        const hlsSteamAvailableMsg : HLSStreamAvailableMessege = {
+            type : 'hlsSteamAvailable',
+            roomId: roomId,
+            playlistUrl : `${env.serverUrl}/hls/${roomId}/playlist.m3u8`,
+        }
+
+        broadcastToRoom(wss, rooms, roomId, hlsSteamAvailableMsg);
     } 
 
 
@@ -310,7 +323,9 @@ async function createConsumer(
 }
 
 //cleanup all the resources when a peer disconnects
-async function cleanupPeer(wsId:string, roomId: string){
+async function cleanupPeer(wsId:string, roomId: string, wss: WebSocketServer,
+    rooms : { [roomId: string]: { id: string; name: string }[] },
+    ){
     //get all the transport ids for this peer
     const transportIds = peerTransports.get(wsId);
     if(transportIds){
@@ -347,6 +362,12 @@ async function cleanupPeer(wsId:string, roomId: string){
         
         await streamManager.stopHLSStream(roomId);
         producerRoom.delete(roomId);
+
+        const hlsUnAvailMsg : HLSUnavailable = {
+            type: 'hlsUnavailable',
+            roomId : roomId
+        }
+        broadcastToRoom(wss,rooms,roomId, hlsUnAvailMsg);
     }
     console.log(`Cleanup completed for peer: ${wsId}`);
 

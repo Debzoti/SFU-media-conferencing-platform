@@ -1,5 +1,5 @@
 import { types } from "mediasoup";
-import { HLSConfig, StreamSession, FFmpegConfig } from "src/config";
+import { HLSConfig, StreamSession, FFmpegConfig } from "src/config/config";
 import {types as mediasoupTypes} from "mediasoup";
 import { HLSTranscoder } from "./hlsTranscoder";
 import { ChildProcess } from "node:child_process";
@@ -161,6 +161,16 @@ export class StreamManager{
         });
         
         console.log(`Started HLS stream for room ${roomId} on ports ${videoRtpPort}, ${audioRtpPort}`);
+
+        ffmpegProcess.on('exit', (code, signal) =>{
+            console.error(`ffmopeg crashed for room ${roomId}, cleaning up ..`);
+            
+            //update sessohns status
+            const session = this.sessions.get(roomId);
+            if(session){
+                session.status = 'failed';
+            }
+        })
     }
 
 
@@ -203,6 +213,11 @@ export class StreamManager{
 
     }
 
+
+    /**
+     * * for cleaning up after ffmpeg crash 
+     * things to clean are 
+     */
     
 }
 

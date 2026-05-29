@@ -1,6 +1,6 @@
 import {ChildProcess} from 'node:child_process';
 import {types as mediasoupTypes} from 'mediasoup';
-import { HLSTranscoder } from './media/hlsTranscoder';
+import { HLSTranscoder } from 'src/media/hlsTranscoder';
 
 export interface HLSConfig {
     segmentDuration: number;
@@ -42,4 +42,15 @@ export interface StreamSession {
     audioPort : number,
     startTime: Date;
     status: 'starting' | 'active' | 'stopping' | 'failed';
+}
+
+export interface HLSStreamAvailableMessege {
+    type: 'hlsSteamAvailable';
+    roomId : string;
+    playlistUrl : string;
+}
+
+export interface HLSUnavailable{
+    type: 'hlsUnavailable';
+    roomId: string; 
 }

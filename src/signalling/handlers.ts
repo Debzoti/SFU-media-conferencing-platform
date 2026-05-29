@@ -10,8 +10,11 @@ import {
             createConsumer,
             cleanupPeer
     } from "../media/mediaManager";
+import { StreamManager } from "src/media/streamManager";
+import config from "src/config/config.json";
+import { env } from "src/config/binding";
 
-
+let streamManager : StreamManager;
 
 //handle signalling messages
 
@@ -68,11 +71,17 @@ import {
                     })
                 );
 
+                //notify users about the avial hlsStreams in this room
+                streamManager = new StreamManager(config.hls);
+                const hlsstream = streamManager.getSTreamStatus(roomId) ? {
+                    playlistUrl : `${env.serverUrl}/hls/${roomId}/playlist.m3u8`
+                } : null;
 
                 //send the room imfoo
                 const roomInfo = {
                     roomId: roomIdNumber,
                     users : rooms[roomIdNumber].map(user => ({ id: user.id, name: user.name })),
+                    hlsstream
                 };
                 ws.send(JSON.stringify({
                     type: 'roomInfo',
@@ -124,7 +133,7 @@ import {
                     
                     //notify users sbout nree producer
                     const roomId = socketToRoom[ws.id];
-                    await produce(ws.id, transportId, rtpParameters, kind, roomId.toString());
+                    await produce(ws.id, transportId, rtpParameters, kind, roomId.toString(), wss, rooms);
                     if(roomId && rooms[roomId]){
                         rooms[roomId].forEach(user => {
                             if(user.id !== ws.id){
@@ -191,8 +200,9 @@ const handleDisconnect = async (
     rooms: { [roomId: string]: { id: string; name: string }[] },
     socketToRoom: { [socketId: string]: number }
 ) => {
-        cleanupPeer(ws.id);
-        const roomId = socketToRoom[ws.id];
+    const roomId = socketToRoom[ws.id];
+    await cleanupPeer(ws.id, roomId.toString(), wss, rooms);
+
         if(roomId && rooms[roomId]){
             rooms[roomId] = rooms[roomId].filter(user => user.id !== ws.id);
             //notify other users
@@ -213,5 +223,27 @@ const handleDisconnect = async (
         delete socketToRoom[ws.id]; 
     }
 
+    const broadcastToRoom = async (
+        wss :WebSocketServer,
+        rooms : { [roomId: string]: { id: string; name: string }[] },
+        roomId : string,
+        message : object
+    ) => {
+        //get the clients
+        const clients = rooms[roomId];
+        if(!clients) return;
+        
+        const parsedMsg = JSON.stringify(message);
 
-    export { handleSignallingMessege, handleDisconnect };
+        clients.forEach(client => {
+            const clientSocket = Array.from(wss.clients).find(
+                (ws: any) => (ws as WebSocket & {id : string}).id === client.id
+            );
+            if(clientSocket && clientSocket.readyState === WebSocket.OPEN){
+                clientSocket.send(parsedMsg);
+            }
+        })
+    }
+
+
+    export {broadcastToRoom, handleSignallingMessege, handleDisconnect };

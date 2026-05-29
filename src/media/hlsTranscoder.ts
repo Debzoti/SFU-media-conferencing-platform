@@ -1,5 +1,5 @@
 import {ChildProcess, spawn} from 'node:child_process';
-import { FFmpegConfig } from 'src/config';
+import { FFmpegConfig } from 'src/config/config';
 
 class HLSTranscoder{
     //credentials
@@ -8,6 +8,7 @@ class HLSTranscoder{
 
     constructor(config : any){
         this.config = config;
+       // this.process = 
     }
 
     //start the ffmpeg arg process
