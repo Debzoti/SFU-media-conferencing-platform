@@ -11,6 +11,7 @@ import { types as mediasoupTypes,createWorker } from "mediasoup";
 import config from '../../config.json' ;
 import {Config} from '../config' ;
 import { StreamManager } from "./streamManager";
+import { HLSTranscoder } from "./hlsTranscoder";
 
 let configData:Config = config as Config;
 
@@ -27,7 +28,10 @@ const transports:Map<string,mediasoupTypes.WebRtcTransport> = new Map();
 const producers:Map<string,mediasoupTypes.Producer<mediasoupTypes.AppData>> = new Map();
 const producerOwner:Map<string,string> = new Map(); //map producer id to socket id  
 const peerTransports:Map<string,string[]> = new Map(); //map socket id to transport id
-const producerRoom : Map<mediasoupTypes.Producer, string> = new Map();
+const producerRoom : Map<string, Set<string>> = new Map(); // roomId -> Set of producer ids in that room
+
+let streamManager : StreamManager ;
+
 /*
 
                         +--------------------+
@@ -123,6 +127,9 @@ async function initApp() {
         mediaCodecs: mediaCodecs as mediasoupTypes.RtpCodecCapability[],
     })
 
+    //calling stream manager instance
+    streamManager = new StreamManager(config.hls);
+
     console.log('Router created with id:', router.id);
     
 }
@@ -197,25 +204,52 @@ async function produce(
     wsId:string,
     transportId:string,
     rtpParameters:mediasoupTypes.RtpParameters, 
-    kind:mediasoupTypes.MediaKind
+    kind:mediasoupTypes.MediaKind,
+    roomId: string
 ){
     const transport = transports.get(transportId); //get the transportid from map
     if(!transport){
         throw new Error('Transport not found');
     }
 
+    const isFirstProducer = !producerRoom.has(roomId) || producerRoom.get(roomId)!.size === 0; //chcek if its first or not 
     //cretae producer for that transport
     const producer = await transport.produce({
         kind,
         rtpParameters,
         appData: {
             wsId,
-        }       
+        }
     });
 
+    
+    
+    
     //store the producer in map for cleanup later
     producers.set(producer.id, producer);
     producerOwner.set(producer.id, wsId);
+
+    //TODO: handle producerroom 
+    if(!producerRoom.has(roomId)){
+        producerRoom.set(roomId,new Set());
+    }
+    producerRoom.get(roomId)?.add(producer.id)
+    
+    //TODO: start hls if its the first producer
+    if(isFirstProducer){
+        try {
+            await streamManager.startHLSStream(roomId,producer,router);
+            console.log(`started HLS for room - ${roomId}`);
+            
+        } catch (error) {
+            console.log(`failed to start Hls for room - ${roomId}`);
+            
+        }
+    } 
+
+
+
+
 
     producer.on('transportclose', () => {
         console.log(`Producer's transport closed, closing producer ${producer.id}`);
@@ -276,7 +310,7 @@ async function createConsumer(
 }
 
 //cleanup all the resources when a peer disconnects
-async function cleanupPeer(wsId:string){
+async function cleanupPeer(wsId:string, roomId: string){
     //get all the transport ids for this peer
     const transportIds = peerTransports.get(wsId);
     if(transportIds){
@@ -301,12 +335,21 @@ async function cleanupPeer(wsId:string){
                 producer.close();
                 producers.delete(producerId);
                 producerOwner.delete(producerId);
+                producerRoom.get(roomId)?.delete(producerId);
                 console.log(`Producer closed: ${producerId}`);
             }
         }
     }
 
+    
+    if(producerRoom.get(roomId)?.size === 0){
+        console.log(`last producer leaving ${roomId} , stoopping hls `);
+        
+        await streamManager.stopHLSStream(roomId);
+        producerRoom.delete(roomId);
+    }
     console.log(`Cleanup completed for peer: ${wsId}`);
+
 }
 
 export {

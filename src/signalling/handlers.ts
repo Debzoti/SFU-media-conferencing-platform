@@ -19,7 +19,7 @@ import {
         ws: WebSocketWithId & {id : string},
         wss: WebSocketServer,
         parsedData: string,
-        rooms: { [roomId: number]: { id: string; name: string }[] }, //room name
+        rooms: { [roomId: string]: { id: string; name: string }[] }, //room name
         socketToRoom:  { [socketId: string]: number } 
         ) => {
         const { type } = JSON.parse(parsedData);
@@ -121,10 +121,10 @@ import {
 
                 case "produce": {
                     const {transportId, kind, rtpParameters} = JSON.parse(parsedData);
-                    await produce(ws.id, transportId, rtpParameters, kind);
-
+                    
                     //notify users sbout nree producer
                     const roomId = socketToRoom[ws.id];
+                    await produce(ws.id, transportId, rtpParameters, kind, roomId.toString());
                     if(roomId && rooms[roomId]){
                         rooms[roomId].forEach(user => {
                             if(user.id !== ws.id){

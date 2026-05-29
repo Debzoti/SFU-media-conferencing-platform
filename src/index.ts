@@ -1,5 +1,5 @@
 //signaling server for  peer 2 peer connections
-import express from 'express';
+import express , {Request,Response} from 'express';
 import http, { Server } from 'http';
 import { WebSocketServer } from 'ws';
 import { WebSocketWithId, WebSocket } from '../typings/ws'; // Import the extended WebSocket interface
@@ -7,6 +7,7 @@ import {v6 as uuidv6} from 'uuid';
 import crypto from 'crypto';
 import { join } from 'path';
 import path from 'path';
+import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { handleSignallingMessege, handleDisconnect } from './signalling/handlers';
 import { initApp } from './media/mediaManager.js';
@@ -32,8 +33,31 @@ const server = http.createServer(app);
 // }));
 
 
+app.get("/hls/:roomId/playlist.m3u8",(req : Request, res: Response) =>{
+  const {roomId} = req.params;
+  const playlistPath = path.join(__dirname, 'public', 'hls', `room-${roomId}-playlist.m3u8`);
 
+  if(!fs.existsSync(playlistPath)){
+    return res.status(404).send('playlist not found');
+  }
 
+    res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.sendFile(playlistPath);
+})
+
+app.get("/hls/:roomId/segment_:segmentId.ts", (req: Request, res: Response) => {
+    const { roomId, segmentId } = req.params;
+    const segmentPath = path.join(__dirname, 'public', 'hls', `room-${roomId}-segment_${segmentId}.ts`);
+    
+    if (!fs.existsSync(segmentPath)) {
+        return res.status(404).send('Segment not found');
+    }
+    
+    res.setHeader('Content-Type', 'video/mp2t');
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.sendFile(segmentPath);
+});
 
   // Initialize WebSocket server
 const wss = new WebSocketServer({ server });
@@ -115,7 +139,6 @@ wss.on('connection', (ws: WebSocket) => {
 
 
 
-// ---> change above code ws doesnit have custom handlers like joinRoom, offer, answer, candidate, disconnect
 
 
 
