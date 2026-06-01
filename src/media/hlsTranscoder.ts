@@ -3,12 +3,11 @@ import { FFmpegConfig } from 'src/config/config';
 
 class HLSTranscoder{
     //credentials
-    private process : ChildProcess;
+    private process! : ChildProcess;
     private config : FFmpegConfig; //lets change later
 
     constructor(config : any){
         this.config = config;
-       // this.process = 
     }
 
     //start the ffmpeg arg process

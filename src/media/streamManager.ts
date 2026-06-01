@@ -92,6 +92,29 @@ export class StreamManager{
         return this.sessions.get(roomId) || null;
     }
 
+        /**
+         * * clean up on ffmpeg failure
+         * @param roomId
+         */
+
+    private async cleanupOnFailure(roomId: string) : Promise<void> {
+        const session = this.sessions.get(roomId);
+        if(!session) return;
+
+        try {
+            session.plainTransport.close();
+            await this.cleanupFiles(roomId);
+            this.releaseRtpPort(session.rtpPort);
+            this.releaseRtpPort(session.audioPort);
+            this.sessions.delete(roomId);
+        } catch (error) {
+            console.error(`Error during cleanup room-${roomId}`);
+            
+        }
+    
+    }
+
+
 
     /**
      * * start the HLS streaming 
