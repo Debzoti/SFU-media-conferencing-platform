@@ -5,6 +5,7 @@ import { HLSTranscoder } from "./hlsTranscoder";
 import { ChildProcess } from "node:child_process";
 import { readdir, unlink } from "node:fs/promises"; 
 import path from "node:path";
+import { validateHLSConfig } from "./mediaManager";
 
 export class StreamManager{
     private sessions : Map<string, StreamSession>;
@@ -15,6 +16,7 @@ export class StreamManager{
 
     
     constructor(config:HLSConfig){
+        this.config = validateHLSConfig(config);
         this.sessions = new Map<string,StreamSession>();
         this.config = config;
         this.nextRtpPort= config.rtpPortStart;

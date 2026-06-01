@@ -9,7 +9,7 @@
 import { types as mediasoupTypes,createWorker } from "mediasoup";
 
 import config from 'src/config/config.json' ;
-import {Config, HLSStreamAvailableMessege, HLSUnavailable} from 'src/config/config' ;
+import {Config, HLSConfig, HLSStreamAvailableMessege, HLSUnavailable} from 'src/config/config' ;
 import { StreamManager } from "./streamManager";
 import { HLSTranscoder } from "./hlsTranscoder";
 import { broadcastToRoom } from "src/signalling/handlers";
@@ -373,6 +373,47 @@ async function cleanupPeer(wsId:string, roomId: string, wss: WebSocketServer,
 
 }
 
+    function validateHLSConfig(config : HLSConfig) : HLSConfig{
+        const defaults = {
+        "segmentDuration": 4,
+        "playlistSize": 6,
+        "videoBitrate": "1000k",
+        "videoPreset": "veryfast",
+        "gopSize": 48,
+        "audioBitrate": "128k",
+        "outputDir": "public/hls",
+        "rtpPortStart": 20000,
+        "rtpPortEnd": 20100
+        };
+
+            //validarte segment duration
+        if(!config.segmentDuration || config.segmentDuration <=0){
+            console.warn(`Invalid segment duration: ${config.segmentDuration}, using default ${defaults.segmentDuration}`);
+            config.segmentDuration = defaults.segmentDuration;
+        }
+
+        // Validate playlistSize
+        if (!config.playlistSize || config.playlistSize <= 0) {
+            console.warn(`Invalid playlistSize: ${config.playlistSize}, using default ${defaults.playlistSize}`);
+            config.playlistSize = defaults.playlistSize;
+        }
+        
+        // Validate port range
+        if (!config.rtpPortStart || !config.rtpPortEnd || config.rtpPortStart >= config.rtpPortEnd) {
+            console.warn(`Invalid port range, using defaults`);
+            config.rtpPortStart = defaults.rtpPortStart;
+            config.rtpPortEnd = defaults.rtpPortEnd;
+        }
+        
+        // Validate videoBitrate
+        if (!config.videoBitrate) {
+            console.warn(`Invalid videoBitrate: ${config.videoBitrate}, using default ${defaults.videoBitrate}`);
+            config.videoBitrate = defaults.videoBitrate;
+        }
+        
+        return config;
+    }
+
 export {
     initApp,
     getRouterRtpCapabilites,
@@ -381,4 +422,5 @@ export {
     produce,
     createConsumer,
     cleanupPeer,
+    validateHLSConfig
 };
