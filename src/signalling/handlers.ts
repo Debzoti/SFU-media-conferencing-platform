@@ -37,7 +37,7 @@ let streamManager : StreamManager;
                     const data = JSON.parse(parsedData);
                     const { roomId, name } = data;
                     
-                    console.log(`User joining room: ${data.roomId} with name: ${data.name}`);
+                    console.log(`🚪 User joining room: ${data.roomId} with name: ${data.name}, wsId: ${ws.id}`);
                     if (!data.roomId || !data.name) {
                         ws.send(JSON.stringify({ error: 'Room ID and name are required' }));
                         return;
@@ -131,20 +131,34 @@ let streamManager : StreamManager;
                 case "produce": {
                     const {transportId, kind, rtpParameters} = JSON.parse(parsedData);
                     
-                    //notify users sbout nree producer
+                    console.log(`📤 Produce request: kind=${kind}, transportId=${transportId}, wsId=${ws.id}`);
+                    
+                    //notify users about new producer
                     const roomId = socketToRoom[ws.id];
-                    await produce(ws.id, transportId, rtpParameters, kind, roomId.toString(), wss, rooms);
+                    const result = await produce(ws.id, transportId, rtpParameters, kind, roomId.toString(), wss, rooms);
+                    
+                    console.log(`✅ Producer created: ${result.id} for kind=${kind}`);
+                    
+                    // Send response back to producer
+                    ws.send(JSON.stringify({
+                        type: 'produceResponse',
+                        producerId: result.id,
+                        kind: result.kind
+                    }));
+                    
                     if(roomId && rooms[roomId]){
+                        console.log(`🔔 Notifying ${rooms[roomId].length - 1} users about new producer`);
                         rooms[roomId].forEach(user => {
                             if(user.id !== ws.id){
                                 const userSocket   = Array.from(wss.clients).find(
                                     (client) => (client as WebSocket  & {id: string}).id === user.id
                                 );
                                 if(userSocket && userSocket.readyState === WebSocket.OPEN){
+                                    console.log(`  📨 Sending newProducer to ${user.id}`);
                                     userSocket.send(
                                         JSON.stringify({
                                             type: 'newProducer',
-                                            producerId: transportId,
+                                            producerId: result.id,
                                             producerSocketId: ws.id,
                                             kind
                                         })
@@ -158,8 +172,10 @@ let streamManager : StreamManager;
 
                 case "createConsumer" : {
                     const {recvTransport,producerId, rtpCapabilities} = JSON.parse(parsedData);
+                    console.log(`📥 Consumer request: producerId=${producerId}, recvTransport=${recvTransport}`);
                     try{
                         const consumer = await createConsumer( recvTransport, producerId, rtpCapabilities);
+                        console.log(`✅ Consumer created: ${consumer.id} for producer=${producerId}`);
                         ws.send(
                             JSON.stringify({
                                 type: 'createConsumerResponse',
@@ -167,7 +183,7 @@ let streamManager : StreamManager;
                             })
                         );
                     }catch(err:any){
-                        console.error('Error creating consumer', err);
+                        console.error('❌ Error creating consumer:', err);
                         ws.send(
                             JSON.stringify({
                                 type: 'createConsumerError',
@@ -177,6 +193,70 @@ let streamManager : StreamManager;
                     }
                     return;
                     
+                }
+
+                // P2P WebRTC handlers (for simple client)
+                case "offer": {
+                    const { offer, roomId } = JSON.parse(parsedData);
+                    console.log(`📨 Relaying offer in room ${roomId}`);
+                    
+                    // Forward offer to other users in the room
+                    const roomIdNum = parseInt(roomId, 10);
+                    if (rooms[roomIdNum]) {
+                        rooms[roomIdNum].forEach(user => {
+                            if (user.id !== ws.id) {
+                                const userSocket = Array.from(wss.clients).find(
+                                    (client) => (client as WebSocket & {id: string}).id === user.id
+                                );
+                                if (userSocket && userSocket.readyState === WebSocket.OPEN) {
+                                    userSocket.send(JSON.stringify({ type: 'offer', offer }));
+                                }
+                            }
+                        });
+                    }
+                    return;
+                }
+
+                case "answer": {
+                    const { answer, roomId } = JSON.parse(parsedData);
+                    console.log(`📨 Relaying answer in room ${roomId}`);
+                    
+                    // Forward answer to other users in the room
+                    const roomIdNum = parseInt(roomId, 10);
+                    if (rooms[roomIdNum]) {
+                        rooms[roomIdNum].forEach(user => {
+                            if (user.id !== ws.id) {
+                                const userSocket = Array.from(wss.clients).find(
+                                    (client) => (client as WebSocket & {id: string}).id === user.id
+                                );
+                                if (userSocket && userSocket.readyState === WebSocket.OPEN) {
+                                    userSocket.send(JSON.stringify({ type: 'answer', answer }));
+                                }
+                            }
+                        });
+                    }
+                    return;
+                }
+
+                case "iceCandidate": {
+                    const { candidate, roomId } = JSON.parse(parsedData);
+                    console.log(`🧊 Relaying ICE candidate in room ${roomId}`);
+                    
+                    // Forward ICE candidate to other users in the room
+                    const roomIdNum = parseInt(roomId, 10);
+                    if (rooms[roomIdNum]) {
+                        rooms[roomIdNum].forEach(user => {
+                            if (user.id !== ws.id) {
+                                const userSocket = Array.from(wss.clients).find(
+                                    (client) => (client as WebSocket & {id: string}).id === user.id
+                                );
+                                if (userSocket && userSocket.readyState === WebSocket.OPEN) {
+                                    userSocket.send(JSON.stringify({ type: 'iceCandidate', candidate }));
+                                }
+                            }
+                        });
+                    }
+                    return;
                 }
 
 

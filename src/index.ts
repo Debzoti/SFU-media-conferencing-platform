@@ -15,30 +15,25 @@ import { getRouterRtpCapabilites, createWebrtcTransport } from './media/mediaMan
 const app = express();
 const server = http.createServer(app);
 
+const __dirname = fileURLToPath(new URL('.', import.meta.url));
 
-// const __dirname = fileURLToPath(new URL('.', import.meta.url));
+// Serve static files from public directory
+app.use(express.static(path.join(__dirname, '..', 'public')));
 
-// // serve client static files (if not already)
-// app.use(express.static(path.join(__dirname, '..', 'public')));
-
-// // explicitly serve HLS assets
-// app.use('/hls', express.static(path.join(__dirname, 'public', 'hls'), {
-//   setHeaders: (res, path) => {
-//     if (path.endsWith('.m3u8')) {
-//       res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
-//     } else if (path.endsWith('.ts')) {
-//       res.setHeader('Content-Type', 'video/mp2t');
-//     }
-//   }
-// }));
+// Serve node_modules for ES module imports
+app.use('/node_modules', express.static(path.join(__dirname, '..', 'node_modules')));
 
 
 app.get("/hls/:roomId/playlist.m3u8",(req : Request, res: Response) =>{
   const {roomId} = req.params;
-  const playlistPath = path.join(__dirname, 'public', 'hls', `room-${roomId}-playlist.m3u8`);
+  const playlistPath = path.join(process.cwd(), 'public', 'hls', `room-${roomId}-playlist.m3u8`);
+
+  console.log(`[HLS] Playlist requested for room: ${roomId}`);
+  console.log(`[HLS] Looking for file at: ${playlistPath}`);
 
   if(!fs.existsSync(playlistPath)){
-    return res.status(404).send('playlist not found');
+    console.log(`[HLS] Playlist not found: ${playlistPath}`);
+    return res.status(404).send('Playlist not found');
   }
 
     res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
@@ -48,9 +43,13 @@ app.get("/hls/:roomId/playlist.m3u8",(req : Request, res: Response) =>{
 
 app.get("/hls/:roomId/segment_:segmentId.ts", (req: Request, res: Response) => {
     const { roomId, segmentId } = req.params;
-    const segmentPath = path.join(__dirname, 'public', 'hls', `room-${roomId}-segment_${segmentId}.ts`);
+    const segmentPath = path.join(process.cwd(), 'public', 'hls', `room-${roomId}-segment_${segmentId}.ts`);
+    
+    console.log(`[HLS] Segment requested: room=${roomId}, segment=${segmentId}`);
+    console.log(`[HLS] Looking for file at: ${segmentPath}`);
     
     if (!fs.existsSync(segmentPath)) {
+        console.log(`[HLS] Segment not found: ${segmentPath}`);
         return res.status(404).send('Segment not found');
     }
     
@@ -61,8 +60,24 @@ app.get("/hls/:roomId/segment_:segmentId.ts", (req: Request, res: Response) => {
 
   // Initialize WebSocket server
 const wss = new WebSocketServer({ server });
-app.get('/', (req, res) => {
-  res.send('WebSocket signaling server is running');
+
+// Test endpoint to manually trigger HLS
+app.post('/test-hls/:roomId', async (req, res) => {
+    const { roomId } = req.params;
+    try {
+        console.log(`🧪 Testing HLS for room: ${roomId}`);
+        
+        // This would normally be triggered by produce() in mediaManager
+        // For now, just check if the infrastructure works
+        
+        res.json({ 
+            message: 'HLS test endpoint',
+            roomId,
+            note: 'HLS requires mediasoup producer to work. Use mediasoup client instead of P2P.'
+        });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
 });
 
 initApp();

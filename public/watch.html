@@ -1,23 +1,126 @@
 <!doctype html>
 <html>
-  <head><meta charset="utf-8"/><title>Watch HLS</title></head>
+  <head>
+    <meta charset="utf-8"/>
+    <title>Watch HLS Stream</title>
+    <style>
+      body { font-family: Arial, sans-serif; padding: 20px; background: #1a1a1a; color: #fff; }
+      #controls { margin-bottom: 20px; }
+      input { padding: 8px; margin-right: 10px; font-size: 14px; }
+      button { padding: 8px 16px; background: #0066cc; color: #fff; border: none; cursor: pointer; font-size: 14px; }
+      button:hover { background: #0052a3; }
+      button:disabled { background: #666; cursor: not-allowed; }
+      video { width: 100%; max-width: 900px; border: 2px solid #444; background: #000; }
+      #status { margin-top: 10px; padding: 10px; background: #333; border-radius: 4px; }
+      .error { color: #ff4444; }
+      .success { color: #44ff44; }
+    </style>
+  </head>
   <body>
-    <h3>HLS Watch</h3>
-    <video id="player" controls autoplay muted playsinline width="640"></video>
+    <h2>🎥 HLS Stream Viewer</h2>
+    <div id="controls">
+      <input type="text" id="roomInput" placeholder="Enter Room ID (e.g., test-room)" value="test-room" />
+      <button id="watchBtn">Watch Stream</button>
+    </div>
+    <video id="player" controls playsinline width="900"></video>
+    <div id="status"></div>
+
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <script>
       const video = document.getElementById('player');
-      const url = '/hls/playlist.m3u8';
-      if (Hls.isSupported()) {
-        const hls = new Hls();
-        hls.loadSource(url);
-        hls.attachMedia(video);
-        hls.on(Hls.Events.MANIFEST_PARSED, () => video.play().catch(()=>{}));
-      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        video.src = url;
-        video.addEventListener('loadedmetadata', () => video.play().catch(()=>{}));
-      } else {
-        document.body.innerHTML = 'HLS not supported in this browser';
+      const roomInput = document.getElementById('roomInput');
+      const watchBtn = document.getElementById('watchBtn');
+      const status = document.getElementById('status');
+      let hls = null;
+
+      function log(message, isError = false) {
+        const timestamp = new Date().toLocaleTimeString();
+        status.innerHTML = `[${timestamp}] <span class="${isError ? 'error' : 'success'}">${message}</span>`;
+        console.log(message);
+      }
+
+      watchBtn.addEventListener('click', () => {
+        const roomId = roomInput.value.trim();
+        if (!roomId) {
+          log('Please enter a room ID', true);
+          return;
+        }
+
+        // Stop existing stream if any
+        if (hls) {
+          hls.destroy();
+          hls = null;
+        }
+
+        const playlistUrl = `/hls/${roomId}/playlist.m3u8`;
+        log(`Loading HLS stream for room: ${roomId}`);
+
+        if (Hls.isSupported()) {
+          hls = new Hls({
+            debug: true,
+            enableWorker: true,
+            lowLatencyMode: true,
+            backBufferLength: 90
+          });
+
+          hls.loadSource(playlistUrl);
+          hls.attachMedia(video);
+
+          hls.on(Hls.Events.MANIFEST_PARSED, () => {
+            log(`✓ Playlist loaded successfully`);
+            video.play().catch(err => {
+              log(`Autoplay blocked: ${err.message}. Click play button.`, true);
+            });
+          });
+
+          hls.on(Hls.Events.ERROR, (event, data) => {
+            if (data.fatal) {
+              log(`❌ Fatal HLS error: ${data.type} - ${data.details}`, true);
+              switch(data.type) {
+                case Hls.ErrorTypes.NETWORK_ERROR:
+                  log('Network error - stream may not exist yet', true);
+                  break;
+                case Hls.ErrorTypes.MEDIA_ERROR:
+                  log('Media error - trying to recover...', true);
+                  hls.recoverMediaError();
+                  break;
+                default:
+                  log('Unrecoverable error', true);
+                  hls.destroy();
+                  break;
+              }
+            } else {
+              console.warn('Non-fatal HLS error:', data);
+            }
+          });
+
+          hls.on(Hls.Events.FRAG_LOADED, (event, data) => {
+            console.log(`Segment loaded: ${data.frag.relurl}`);
+          });
+
+        } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+          // Safari native HLS support
+          video.src = playlistUrl;
+          video.addEventListener('loadedmetadata', () => {
+            log('✓ Stream loaded (Safari native HLS)');
+            video.play().catch(err => {
+              log(`Autoplay blocked: ${err.message}`, true);
+            });
+          });
+          video.addEventListener('error', (e) => {
+            log(`Video error: ${e.message || 'Unknown error'}`, true);
+          });
+        } else {
+          log('HLS not supported in this browser', true);
+        }
+      });
+
+      // Auto-load if room ID is provided in URL
+      const urlParams = new URLSearchParams(window.location.search);
+      const roomFromUrl = urlParams.get('room');
+      if (roomFromUrl) {
+        roomInput.value = roomFromUrl;
+        watchBtn.click();
       }
     </script>
   </body>

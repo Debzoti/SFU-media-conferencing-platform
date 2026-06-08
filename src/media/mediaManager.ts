@@ -15,7 +15,15 @@ import { HLSTranscoder } from "./hlsTranscoder";
 import { broadcastToRoom } from "src/signalling/handlers";
 import { WebSocketServer } from "ws";
 import { env } from "src/config/binding";
+import path from 'path';
+
 let configData:Config = config as Config;
+
+// Resolve outputDir to absolute path
+const hlsConfig: HLSConfig = {
+    ...configData.hls,
+    outputDir: path.join(process.cwd(), configData.hls.outputDir)
+};
 
 //media manager will handle all the media related tasks
 //like creating worker, router, transport, producer, consumer
@@ -130,7 +138,7 @@ async function initApp() {
     })
 
     //calling stream manager instance
-    streamManager = new StreamManager(config.hls);
+    streamManager = new StreamManager(hlsConfig);
 
     console.log('Router created with id:', router.id);
     

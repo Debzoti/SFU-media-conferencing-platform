@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    container_name: mediasoup-hls-stream
+    ports:
+      - "3000:3000"
+      - "10000-10100:10000-10100/udp"
+      - "10000-10100:10000-10100/tcp"
+    environment:
+      - NODE_ENV=production
+      - SERVER_URL=http://localhost:3000
+    volumes:
+      # Mount source code for development (optional, remove for production)
+      - ./src:/app/src:Z
+      - ./public:/app/public:Z
+      - ./client:/app/client:Z
+    restart: unless-stopped
