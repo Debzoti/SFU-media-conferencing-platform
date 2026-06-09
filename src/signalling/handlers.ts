@@ -1,6 +1,6 @@
 import { WebSocket, WebSocketServer } from "ws";
 import { v4 as uuidv4 } from "uuid";
-import { WebSocketWithId } from "../../typings/ws";
+import { WebSocketWithId } from "../typings/ws";
 import {
         initApp,
         getRouterRtpCapabilites,
@@ -13,6 +13,9 @@ import {
 import { StreamManager } from "src/media/streamManager";
 import config from "src/config/config.json";
 import { env } from "src/config/binding";
+import { childLogger } from "src/tools/logger";
+
+const log = childLogger('signalling');
 
 let streamManager : StreamManager;
 
@@ -26,7 +29,7 @@ let streamManager : StreamManager;
         socketToRoom:  { [socketId: string]: number } 
         ) => {
         const { type } = JSON.parse(parsedData);
-        console.log(type);
+        log.debug({ type, wsId: ws.id }, 'signalling message received');
 
         try {
             switch (type) {
@@ -37,7 +40,7 @@ let streamManager : StreamManager;
                     const data = JSON.parse(parsedData);
                     const { roomId, name } = data;
                     
-                    console.log(`🚪 User joining room: ${data.roomId} with name: ${data.name}, wsId: ${ws.id}`);
+                    log.info({ roomId: data.roomId, name: data.name, wsId: ws.id }, 'User joining room');
                     if (!data.roomId || !data.name) {
                         ws.send(JSON.stringify({ error: 'Room ID and name are required' }));
                         return;
@@ -131,13 +134,13 @@ let streamManager : StreamManager;
                 case "produce": {
                     const {transportId, kind, rtpParameters} = JSON.parse(parsedData);
                     
-                    console.log(`📤 Produce request: kind=${kind}, transportId=${transportId}, wsId=${ws.id}`);
+                    log.info({ kind, transportId, wsId: ws.id }, 'Produce request');
                     
                     //notify users about new producer
                     const roomId = socketToRoom[ws.id];
                     const result = await produce(ws.id, transportId, rtpParameters, kind, roomId.toString(), wss, rooms);
                     
-                    console.log(`✅ Producer created: ${result.id} for kind=${kind}`);
+                    log.info({ producerId: result.id, kind }, 'Producer created');
                     
                     // Send response back to producer
                     ws.send(JSON.stringify({
@@ -147,14 +150,14 @@ let streamManager : StreamManager;
                     }));
                     
                     if(roomId && rooms[roomId]){
-                        console.log(`🔔 Notifying ${rooms[roomId].length - 1} users about new producer`);
+                        log.debug({ count: rooms[roomId].length - 1, roomId }, 'Notifying users about new producer');
                         rooms[roomId].forEach(user => {
                             if(user.id !== ws.id){
                                 const userSocket   = Array.from(wss.clients).find(
                                     (client) => (client as WebSocket  & {id: string}).id === user.id
                                 );
                                 if(userSocket && userSocket.readyState === WebSocket.OPEN){
-                                    console.log(`  📨 Sending newProducer to ${user.id}`);
+                                    log.debug({ userId: user.id }, 'Sending newProducer');
                                     userSocket.send(
                                         JSON.stringify({
                                             type: 'newProducer',
@@ -172,10 +175,10 @@ let streamManager : StreamManager;
 
                 case "createConsumer" : {
                     const {recvTransport,producerId, rtpCapabilities} = JSON.parse(parsedData);
-                    console.log(`📥 Consumer request: producerId=${producerId}, recvTransport=${recvTransport}`);
+                    log.info({ producerId, recvTransport }, 'Consumer request');
                     try{
                         const consumer = await createConsumer( recvTransport, producerId, rtpCapabilities);
-                        console.log(`✅ Consumer created: ${consumer.id} for producer=${producerId}`);
+                        log.info({ consumerId: consumer.id, producerId }, 'Consumer created');
                         ws.send(
                             JSON.stringify({
                                 type: 'createConsumerResponse',
@@ -183,7 +186,7 @@ let streamManager : StreamManager;
                             })
                         );
                     }catch(err:any){
-                        console.error('❌ Error creating consumer:', err);
+                        log.error({ err, producerId }, 'Error creating consumer');
                         ws.send(
                             JSON.stringify({
                                 type: 'createConsumerError',
@@ -198,7 +201,7 @@ let streamManager : StreamManager;
                 // P2P WebRTC handlers (for simple client)
                 case "offer": {
                     const { offer, roomId } = JSON.parse(parsedData);
-                    console.log(`📨 Relaying offer in room ${roomId}`);
+                    log.debug({ roomId }, 'Relaying offer in room');
                     
                     // Forward offer to other users in the room
                     const roomIdNum = parseInt(roomId, 10);
@@ -219,7 +222,7 @@ let streamManager : StreamManager;
 
                 case "answer": {
                     const { answer, roomId } = JSON.parse(parsedData);
-                    console.log(`📨 Relaying answer in room ${roomId}`);
+                    log.debug({ roomId }, 'Relaying answer in room');
                     
                     // Forward answer to other users in the room
                     const roomIdNum = parseInt(roomId, 10);
@@ -240,7 +243,7 @@ let streamManager : StreamManager;
 
                 case "iceCandidate": {
                     const { candidate, roomId } = JSON.parse(parsedData);
-                    console.log(`🧊 Relaying ICE candidate in room ${roomId}`);
+                    log.debug({ roomId }, 'Relaying ICE candidate in room');
                     
                     // Forward ICE candidate to other users in the room
                     const roomIdNum = parseInt(roomId, 10);
@@ -263,7 +266,7 @@ let streamManager : StreamManager;
             }
             
         } catch (error:any) {
-            console.error("Error handling message:", error);
+            log.error({ err: error, wsId: ws.id }, 'Error handling message');
             ws.send(
                 JSON.stringify({
                     type:'error',

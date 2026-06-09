@@ -1,5 +1,8 @@
 import {ChildProcess, spawn} from 'node:child_process';
 import { FFmpegConfig } from 'src/config/config';
+import { childLogger } from 'src/tools/logger';
+
+const log = childLogger('ffmpeg');
 
 class HLSTranscoder{
     //credentials
@@ -17,18 +20,18 @@ class HLSTranscoder{
         //execute ffmpeg
         this.process = spawn('ffmpeg',args); 
 
-        //monitor the output and error handling 
+        //monitor the output and error handling
         this.process.stdout?.on('data', (data) => {
-            console.log(`FFMPEG: ${data}`);
+            log.debug({ output: data.toString() }, 'ffmpeg stdout');
         });
 
         this.process.stderr?.on('data', (data) => {
-            console.log(`FFMPEG: ${data}`);
+            log.debug({ output: data.toString() }, 'ffmpeg stderr');
         });
 
         this.process?.on('exit', (code,signal) =>{
-            console.log(`FFmpeg exited with code ${code} , signal ${signal}`);
-            
+            log.info({ code, signal }, 'FFmpeg exited');
+
         });
 
         return this.process;

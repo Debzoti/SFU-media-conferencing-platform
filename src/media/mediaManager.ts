@@ -16,6 +16,9 @@ import { broadcastToRoom } from "src/signalling/handlers";
 import { WebSocketServer } from "ws";
 import { env } from "src/config/binding";
 import path from 'path';
+import { childLogger } from "src/tools/logger";
+
+const log = childLogger('media');
 
 let configData:Config = config as Config;
 
@@ -95,7 +98,7 @@ async function initApp() {
     })
 
     worker.on('died', () => {
-        console.error('mediasoup worker died, exiting in 2 seconds... [pid:%d]', worker.pid);
+        log.fatal({ pid: worker.pid }, 'mediasoup worker died, exiting in 2 seconds');
         setTimeout(() => process.exit(1), 2000); // exit in 2 seconds
     });
         
@@ -140,15 +143,15 @@ async function initApp() {
     //calling stream manager instance
     streamManager = new StreamManager(hlsConfig);
 
-    console.log('Router created with id:', router.id);
+    log.info({ routerId: router.id }, 'Router created');
     
 }
 
 //tesing 
 async function getRouterRtpCapabilites(){
     if(!router){
-        console.log('Router not initialized');
-        
+        log.error('Router not initialized');
+
         throw new Error('Router not initialized');
     }
     return router.rtpCapabilities;
@@ -171,7 +174,7 @@ async function createWebrtcTransport(wsId:string){
         initialAvailableOutgoingBitrate: 1000000,
     });
 
-    console.log(`Transport created: ${transport.id}`);
+    log.info({ transportId: transport.id, wsId }, 'Transport created');
 
     //record the transports in map fro cleanup later
     transports.set(transport.id, transport);
@@ -182,7 +185,7 @@ async function createWebrtcTransport(wsId:string){
 
     transport.on('dtlsstatechange', (dtlsState) => {
         if (dtlsState === 'closed') {
-            console.log('Transport DTLS state closed, closing transport');
+            log.debug({ transportId: transport.id }, 'Transport DTLS state closed, closing transport');
             transport.close();
             transports.delete(transport.id);
         }
@@ -207,7 +210,7 @@ async function connectTransport(
     }
     
     await transport.connect({dtlsParameters});
-    console.log(`Transport connected: ${transport.id}`);
+    log.info({ transportId: transport.id }, 'Transport connected');
 }
 
 async function produce(
@@ -251,12 +254,12 @@ async function produce(
     if(isFirstProducer){
         try {
             await streamManager.startHLSStream(roomId,producer,router);
-            console.log(`started HLS for room - ${roomId}`);
+            log.info({ roomId }, 'started HLS for room');
 
-            
+
         } catch (error) {
-            console.log(`failed to start Hls for room - ${roomId}`);
-            
+            log.error({ err: error, roomId }, 'failed to start HLS for room');
+
         }
         //TODO : brioadcast to all peeers in that room
         const hlsSteamAvailableMsg : HLSStreamAvailableMessege = {
@@ -273,13 +276,13 @@ async function produce(
 
 
     producer.on('transportclose', () => {
-        console.log(`Producer's transport closed, closing producer ${producer.id}`);
+        log.debug({ producerId: producer.id }, "Producer's transport closed, closing producer");
         producer.close();
         producers.delete(producer.id);
         producerOwner.delete(producer.id);
     });
 
-    console.log(`Producer created: ${producer.id} for transport: ${transport.id}`);
+    log.info({ producerId: producer.id, transportId: transport.id }, 'Producer created');
 
     return {id: producer.id, kind: producer.kind};
 }
@@ -309,14 +312,14 @@ async function createConsumer(
 
     // When consumer closed by server or transport close events, the client must handle it too.
     consumer.on('transportclose', () => {
-        console.log('consumer transport closed');
+        log.debug('consumer transport closed');
     });
     
     consumer.on('producerclose', () => {
-        console.log('consumer producer closed');
+        log.debug('consumer producer closed');
     });
 
-    console.log(`Consumer created: ${consumer.id} for transport: ${recvTransport.id}`);
+    log.info({ consumerId: consumer.id, transportId: recvTransport.id }, 'Consumer created');
 
     return {
         id: consumer.id,
@@ -343,7 +346,7 @@ async function cleanupPeer(wsId:string, roomId: string, wss: WebSocketServer,
                 //close the transport
                 transport.close();
                 transports.delete(transportId);
-                console.log(`Transport closed: ${transportId}`);
+                log.info({ transportId }, 'Transport closed');
             }
         }
         peerTransports.delete(wsId);
@@ -359,14 +362,14 @@ async function cleanupPeer(wsId:string, roomId: string, wss: WebSocketServer,
                 producers.delete(producerId);
                 producerOwner.delete(producerId);
                 producerRoom.get(roomId)?.delete(producerId);
-                console.log(`Producer closed: ${producerId}`);
+                log.info({ producerId }, 'Producer closed');
             }
         }
     }
 
     
     if(producerRoom.get(roomId)?.size === 0){
-        console.log(`last producer leaving ${roomId} , stoopping hls `);
+        log.info({ roomId }, 'last producer leaving, stopping HLS');
         
         await streamManager.stopHLSStream(roomId);
         producerRoom.delete(roomId);
@@ -377,7 +380,7 @@ async function cleanupPeer(wsId:string, roomId: string, wss: WebSocketServer,
         }
         broadcastToRoom(wss,rooms,roomId, hlsUnAvailMsg);
     }
-    console.log(`Cleanup completed for peer: ${wsId}`);
+    log.info({ wsId }, 'Cleanup completed for peer');
 
 }
 
@@ -396,26 +399,26 @@ async function cleanupPeer(wsId:string, roomId: string, wss: WebSocketServer,
 
             //validarte segment duration
         if(!config.segmentDuration || config.segmentDuration <=0){
-            console.warn(`Invalid segment duration: ${config.segmentDuration}, using default ${defaults.segmentDuration}`);
+            log.warn({ segmentDuration: config.segmentDuration, default: defaults.segmentDuration }, 'Invalid segment duration, using default');
             config.segmentDuration = defaults.segmentDuration;
         }
 
         // Validate playlistSize
         if (!config.playlistSize || config.playlistSize <= 0) {
-            console.warn(`Invalid playlistSize: ${config.playlistSize}, using default ${defaults.playlistSize}`);
+            log.warn({ playlistSize: config.playlistSize, default: defaults.playlistSize }, 'Invalid playlistSize, using default');
             config.playlistSize = defaults.playlistSize;
         }
         
         // Validate port range
         if (!config.rtpPortStart || !config.rtpPortEnd || config.rtpPortStart >= config.rtpPortEnd) {
-            console.warn(`Invalid port range, using defaults`);
+            log.warn('Invalid port range, using defaults');
             config.rtpPortStart = defaults.rtpPortStart;
             config.rtpPortEnd = defaults.rtpPortEnd;
         }
         
         // Validate videoBitrate
         if (!config.videoBitrate) {
-            console.warn(`Invalid videoBitrate: ${config.videoBitrate}, using default ${defaults.videoBitrate}`);
+            log.warn({ videoBitrate: config.videoBitrate, default: defaults.videoBitrate }, 'Invalid videoBitrate, using default');
             config.videoBitrate = defaults.videoBitrate;
         }
         

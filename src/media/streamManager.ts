@@ -6,6 +6,9 @@ import { ChildProcess } from "node:child_process";
 import { readdir, unlink } from "node:fs/promises"; 
 import path from "node:path";
 import { validateHLSConfig } from "./mediaManager";
+import { childLogger } from "src/tools/logger";
+
+const log = childLogger('stream');
 
 export class StreamManager{
     private sessions : Map<string, StreamSession>;
@@ -66,13 +69,13 @@ export class StreamManager{
                 try {
                     await unlink(fullPath);
                 } catch (err) {
-                    console.error(`failed to delet file ${fullPath}`);
-                    
+                    log.error({ err, fullPath }, 'failed to delete file');
+
                 }
             }
         } catch (error) {
-            console.error(`failed to read the dir${outputDir}`);
-            
+            log.error({ err: error, outputDir }, 'failed to read the dir');
+
         }
 
     }
@@ -110,8 +113,8 @@ export class StreamManager{
             this.releaseRtpPort(session.audioPort);
             this.sessions.delete(roomId);
         } catch (error) {
-            console.error(`Error during cleanup room-${roomId}`);
-            
+            log.error({ err: error, roomId }, 'Error during cleanup');
+
         }
     
     }
@@ -133,7 +136,7 @@ export class StreamManager{
 
         //check if already streaming 
         if(this.sessions.has(roomId)){
-            console.log(`Room ${roomId} already has HLS stream`);
+            log.info({ roomId }, 'Room already has HLS stream');
             return;
         }
 
@@ -185,10 +188,10 @@ export class StreamManager{
             status: 'active'
         });
         
-        console.log(`Started HLS stream for room ${roomId} on ports ${videoRtpPort}, ${audioRtpPort}`);
+        log.info({ roomId, videoRtpPort, audioRtpPort }, 'Started HLS stream for room');
 
         ffmpegProcess.on('exit', (code, signal) =>{
-            console.error(`ffmopeg crashed for room ${roomId}, cleaning up ..`);
+            log.error({ roomId, code, signal }, 'ffmpeg crashed for room, cleaning up');
             
             //update sessohns status
             const session = this.sessions.get(roomId);
@@ -210,7 +213,7 @@ export class StreamManager{
         const session = this.sessions.get(roomId);
 
         if(!session){
-            console.log(`no hls stream found in the room ${roomId}`);
+            log.info({ roomId }, 'no HLS stream found in the room');
             return;
         }
         //chnage the streamn status
@@ -234,7 +237,7 @@ export class StreamManager{
         //remove from map
         this.sessions.delete(roomId);
 
-        console.log(`stopped hls streaming for rommid ${roomId}`);
+        log.info({ roomId }, 'stopped HLS streaming for room');
 
     }
 

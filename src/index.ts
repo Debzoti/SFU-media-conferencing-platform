@@ -2,7 +2,7 @@
 import express , {Request,Response} from 'express';
 import http, { Server } from 'http';
 import { WebSocketServer } from 'ws';
-import { WebSocketWithId, WebSocket } from '../typings/ws'; // Import the extended WebSocket interface
+import { WebSocketWithId, WebSocket } from './typings/ws'; // Import the extended WebSocket interface
 import {v6 as uuidv6} from 'uuid';
 import crypto from 'crypto';
 import { join } from 'path';
@@ -12,6 +12,9 @@ import { fileURLToPath } from 'url';
 import { handleSignallingMessege, handleDisconnect } from './signalling/handlers';
 import { initApp } from './media/mediaManager.js';
 import { getRouterRtpCapabilites, createWebrtcTransport } from './media/mediaManager';
+import { childLogger } from './tools/logger';
+
+const log = childLogger('server');
 const app = express();
 const server = http.createServer(app);
 
@@ -28,11 +31,10 @@ app.get("/hls/:roomId/playlist.m3u8",(req : Request, res: Response) =>{
   const {roomId} = req.params;
   const playlistPath = path.join(process.cwd(), 'public', 'hls', `room-${roomId}-playlist.m3u8`);
 
-  console.log(`[HLS] Playlist requested for room: ${roomId}`);
-  console.log(`[HLS] Looking for file at: ${playlistPath}`);
+  log.debug({ roomId, playlistPath }, 'HLS playlist requested');
 
   if(!fs.existsSync(playlistPath)){
-    console.log(`[HLS] Playlist not found: ${playlistPath}`);
+    log.warn({ roomId, playlistPath }, 'HLS playlist not found');
     return res.status(404).send('Playlist not found');
   }
 
@@ -45,11 +47,10 @@ app.get("/hls/:roomId/segment_:segmentId.ts", (req: Request, res: Response) => {
     const { roomId, segmentId } = req.params;
     const segmentPath = path.join(process.cwd(), 'public', 'hls', `room-${roomId}-segment_${segmentId}.ts`);
     
-    console.log(`[HLS] Segment requested: room=${roomId}, segment=${segmentId}`);
-    console.log(`[HLS] Looking for file at: ${segmentPath}`);
-    
+    log.debug({ roomId, segmentId, segmentPath }, 'HLS segment requested');
+
     if (!fs.existsSync(segmentPath)) {
-        console.log(`[HLS] Segment not found: ${segmentPath}`);
+        log.warn({ roomId, segmentId, segmentPath }, 'HLS segment not found');
         return res.status(404).send('Segment not found');
     }
     
@@ -65,7 +66,7 @@ const wss = new WebSocketServer({ server });
 app.post('/test-hls/:roomId', async (req, res) => {
     const { roomId } = req.params;
     try {
-        console.log(`🧪 Testing HLS for room: ${roomId}`);
+        log.info({ roomId }, 'Testing HLS for room');
         
         // This would normally be triggered by produce() in mediaManager
         // For now, just check if the infrastructure works
@@ -115,9 +116,7 @@ wss.on('connection', (ws: WebSocket) => {
         ws.on('message', async (message: Buffer) =>{
 
 
-          console.log("RAW TYPE:", typeof message);
-          console.log("RAW VALUE:", message);
-          console.log("AS STRING:", message.toString());
+          log.debug({ rawType: typeof message }, 'raw message received');
 
           let parsedData : string;
             try {
@@ -128,14 +127,14 @@ wss.on('connection', (ws: WebSocket) => {
               if (!(ws as WebSocketWithId).id) {
                 //assign a unique ID to the WebSocket connection
                 (ws as WebSocketWithId).id = crypto.randomUUID();
-                console.log('New client connected', (ws as WebSocketWithId).id);
+                log.info({ wsId: (ws as WebSocketWithId).id }, 'new client connected');
               } else {
-                console.log('Existing client reconnected', (ws as WebSocketWithId).id);
+                log.info({ wsId: (ws as WebSocketWithId).id }, 'existing client reconnected');
               }
 
 
             } catch (error:any | undefined) {
-              console.error(error);
+              log.error({ err: error }, 'failed to parse incoming message');
               return;
             }
             await handleSignallingMessege(
@@ -158,5 +157,5 @@ wss.on('connection', (ws: WebSocket) => {
 
 
 server.listen(3000, () => {
-  console.log('Server is listening on port 3000');
+  log.info({ port: 3000 }, 'Server is listening');
 });
