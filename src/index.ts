@@ -13,7 +13,12 @@ import { handleSignallingMessege, handleDisconnect } from './signalling/handlers
 import { initApp } from './media/mediaManager.js';
 import { getRouterRtpCapabilites, createWebrtcTransport } from './media/mediaManager';
 import { childLogger } from './tools/logger';
+import { env } from './config/binding';
+import { TransportManager } from './media/transportManager';
 
+// Listen port comes from the PORT env var (set in docker-compose), falling back
+// to 3000 for local dev. Must match the published port in docker-compose.yml.
+const PORT = Number(env.port) || 3000;
 const log = childLogger('server');
 const app = express();
 const server = http.createServer(app);
@@ -43,7 +48,11 @@ app.get("/hls/:roomId/playlist.m3u8",(req : Request, res: Response) =>{
     res.sendFile(playlistPath);
 })
 
-app.get("/hls/:roomId/segment_:segmentId.ts", (req: Request, res: Response) => {
+// FFmpeg writes segments flat as room-<id>-segment_NNN.ts next to the playlist,
+// so the playlist references that full basename and the browser requests
+// /hls/<roomId>/room-<roomId>-segment_NNN.ts. roomId2 is the duplicated id from
+// that basename and is intentionally unused.
+app.get("/hls/:roomId/room-:roomId2-segment_:segmentId.ts", (req: Request, res: Response) => {
     const { roomId, segmentId } = req.params;
     const segmentPath = path.join(process.cwd(), 'public', 'hls', `room-${roomId}-segment_${segmentId}.ts`);
     
@@ -81,28 +90,6 @@ app.post('/test-hls/:roomId', async (req, res) => {
     }
 });
 
-initApp();
- 
-// //test the rourte 
-// app.get('/rtp-capabilities', async (req, res) => {
-//   const cap = await getRouterRtpCapabilites();
-//   console.log(  'Router RTP Capabilities:', cap);
-//   res.json(cap);
-// });
-
-
-// //test transport creation
-// app.post('/create-transport', async (req, res) => {
-//   // In a real application, you would get the wsId from the authenticated user session
-//   const wsId = uuidv6();
-//   try {
-//     const transport = await createWebrtcTransport(wsId);
-//     console.log('Created transport:', transport);
-//     res.json(transport);
-//   } catch (error : any) {
-//     res.status(500).json({ error: error.message });
-//   }
-// });
 
 
 
@@ -110,6 +97,7 @@ initApp();
   //each room have roomId and name
   let rooms: { [roomId: string]: { id: string; name: string }[] } = {}; 
    let socketToRoom: { [socketId: string]: number } = {}; //map to track which socket is in which room
+  const { transportManager, streamManager } = await initApp();
 
 wss.on('connection', (ws: WebSocket) => {
         
@@ -122,19 +110,21 @@ wss.on('connection', (ws: WebSocket) => {
             try {
               parsedData = message.toString();
 
-
               //assig an id to each websocket connection
               if (!(ws as WebSocketWithId).id) {
                 //assign a unique ID to the WebSocket connection
                 (ws as WebSocketWithId).id = crypto.randomUUID();
-                log.info({ wsId: (ws as WebSocketWithId).id }, 'new client connected');
+                // Bind a per-connection child logger so every line for this peer
+                // is tagged with peerId (roomId gets added once they join a room).
+                (ws as WebSocketWithId).log = childLogger('signalling', { peerId: (ws as WebSocketWithId).id });
+                (ws as WebSocketWithId).log!.info('new client connected');
               } else {
-                log.info({ wsId: (ws as WebSocketWithId).id }, 'existing client reconnected');
+                (ws as WebSocketWithId).log?.info('existing client reconnected');
               }
 
 
             } catch (error:any | undefined) {
-              log.error({ err: error }, 'failed to parse incoming message');
+              ((ws as WebSocketWithId).log ?? log).error({ err: error }, 'failed to parse incoming message');
               return;
             }
             await handleSignallingMessege(
@@ -142,7 +132,8 @@ wss.on('connection', (ws: WebSocket) => {
               wss,
                 parsedData,
                 rooms, 
-              socketToRoom
+              socketToRoom,
+              transportManager
             );
         })
 
@@ -156,6 +147,6 @@ wss.on('connection', (ws: WebSocket) => {
 
 
 
-server.listen(3000, () => {
-  log.info({ port: 3000 }, 'Server is listening');
+server.listen(PORT, () => {
+  log.info({ port: PORT }, 'Server is listening');
 });

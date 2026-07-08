@@ -14,6 +14,7 @@ import { StreamManager } from "src/media/streamManager";
 import config from "src/config/config.json";
 import { env } from "src/config/binding";
 import { childLogger } from "src/tools/logger";
+import { TransportManager } from "src/media/transportManager";
 
 const log = childLogger('signalling');
 
@@ -26,32 +27,39 @@ let streamManager : StreamManager;
         wss: WebSocketServer,
         parsedData: string,
         rooms: { [roomId: string]: { id: string; name: string }[] }, //room name
-        socketToRoom:  { [socketId: string]: number } 
+        socketToRoom:  { [socketId: string]: number } ,
+        transportManager : TransportManager
         ) => {
         const { type } = JSON.parse(parsedData);
-        log.debug({ type, wsId: ws.id }, 'signalling message received');
+        // Use the per-connection logger (bound with peerId in index.ts) so every
+        // line below is traceable to this peer. Fall back to a fresh child if missing.
+        let log = ws.log ?? childLogger('signalling', { peerId: ws.id });
+        log.debug({ type }, 'signalling message received');
 
         try {
             switch (type) {
 
                 
                 case "joinRoom":{
-                    //const data = JSON.parse(parsedData);
                     const data = JSON.parse(parsedData);
                     const { roomId, name } = data;
                     
-                    log.info({ roomId: data.roomId, name: data.name, wsId: ws.id }, 'User joining room');
+                    log.info({ roomId: data.roomId, name: data.name }, 'User joining room');
                     if (!data.roomId || !data.name) {
                         ws.send(JSON.stringify({ error: 'Room ID and name are required' }));
                         return;
                     }
                 const roomIdNumber = parseInt(roomId, 10);
-                
+
                 // Check if the roomId is a valid number
                 if (isNaN(roomIdNumber)) {
                     ws.send(JSON.stringify({ error: 'Invalid room ID' }));
                     return;
                 }
+
+                // Now that we know the room, re-bind the per-connection logger so every
+                // subsequent line for this peer also carries roomId.
+                log = (ws.log = log.child({ roomId: roomIdNumber }));
                 
                 
                  // check if the room exists, if not create and push the user
@@ -134,7 +142,7 @@ let streamManager : StreamManager;
                 case "produce": {
                     const {transportId, kind, rtpParameters} = JSON.parse(parsedData);
                     
-                    log.info({ kind, transportId, wsId: ws.id }, 'Produce request');
+                    log.info({ kind, transportId }, 'Produce request');
                     
                     //notify users about new producer
                     const roomId = socketToRoom[ws.id];

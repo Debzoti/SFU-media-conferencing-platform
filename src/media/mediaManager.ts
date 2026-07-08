@@ -16,7 +16,10 @@ import { broadcastToRoom } from "src/signalling/handlers";
 import { WebSocketServer } from "ws";
 import { env } from "src/config/binding";
 import path from 'path';
+
 import { childLogger } from "src/tools/logger";
+import { WorkerManager } from "./workerManager";
+import { TransportManager } from "./transportManager";
 
 const log = childLogger('media');
 
@@ -30,21 +33,18 @@ const hlsConfig: HLSConfig = {
 
 //media manager will handle all the media related tasks
 //like creating worker, router, transport, producer, consumer
-let worker:mediasoupTypes.Worker<mediasoupTypes.AppData>;
-let router:mediasoupTypes.Router<mediasoupTypes.AppData>;
+
 let transport:mediasoupTypes.WebRtcTransport;
 let producer:mediasoupTypes.Producer<mediasoupTypes.AppData>;
 
 //manage the producers transports in map for cleanup later
 //setup rooms producer, producer ownert in map
-const transports:Map<string,mediasoupTypes.WebRtcTransport> = new Map();
 const producers:Map<string,mediasoupTypes.Producer<mediasoupTypes.AppData>> = new Map();
 const producerOwner:Map<string,string> = new Map(); //map producer id to socket id  
-const peerTransports:Map<string,string[]> = new Map(); //map socket id to transport id
 const producerRoom : Map<string, Set<string>> = new Map(); // roomId -> Set of producer ids in that room
 
 let streamManager : StreamManager ;
-
+let workerManager: WorkerManager;
 /*
 
                         +--------------------+
@@ -89,129 +89,36 @@ let streamManager : StreamManager ;
 //initialize the media manager
 
 async function initApp() {
-    //set up worker which will cretae router and transport
 
-    worker = await createWorker({
-        rtcMinPort: configData.rtcMinPort,
-        rtcMaxPort: configData.rtcMaxPort,
-        logLevel: 'warn',
-    })
+  //use the workerManager instance and pull router
+  workerManager = new WorkerManager(config)
+  await workerManager.init();
 
-    worker.on('died', () => {
-        log.fatal({ pid: worker.pid }, 'mediasoup worker died, exiting in 2 seconds');
-        setTimeout(() => process.exit(1), 2000); // exit in 2 seconds
-    });
-        
-    //create a router
+  //calling the transport manager instance
+  const transportManager = new TransportManager(workerManager);
+  
+  //calling stream manager instance
+  streamManager = new StreamManager(hlsConfig);
 
-    const mediaCodecs = [
-        {
-            kind: 'audio',
-            mimeType: 'audio/opus',
-            clockRate: 48000,
-            channels: 2 ,
-            preferredPayloadType: 100,
-            parameters: {
-                "x-google-start-bitrate": 1000,
-                },
-            rtcpFeedback: [
-                { type: "nack" },
-                { type: "ccm", parameter: "fir" },
-                { type: "goog-remb" }
-            ],
-            
-        },{
-            kind: 'video',
-            mimeType: 'video/VP8',
-            clockRate: 90000,
-            preferredPayloadType: 101,
-            parameters: {
-                "x-google-start-bitrate": 1000,
-                },
-            rtcpFeedback: [
-                { type: "nack" },
-                { type: "nack", parameter: "pli" },
-                { type: "ccm", parameter: "fir" },
-                { type: "goog-remb" }
-            ],
-        }
-    ]
-    router  = await worker.createRouter({
-        mediaCodecs: mediaCodecs as mediasoupTypes.RtpCodecCapability[],
-    })
-
-    //calling stream manager instance
-    streamManager = new StreamManager(hlsConfig);
-
-    log.info({ routerId: router.id }, 'Router created');
+  return { transportManager, streamManager };
     
 }
 
 //tesing 
 async function getRouterRtpCapabilites(){
-    if(!router){
+    if(!workerManager.getRouter()){
         log.error('Router not initialized');
 
         throw new Error('Router not initialized');
     }
-    return router.rtpCapabilities;
+    return workerManager.getRouter().rtpCapabilities;
 }
 
 
 
-async function createWebrtcTransport(wsId:string){
-
-    //transport webrtc transport through which we will send media
-
-        transport = await router.createWebRtcTransport({
-        listenIps: [
-            {ip:'0.0.0.0',announcedIp: undefined},
-        ],
-
-        enableUdp: true,
-        enableTcp: true,
-        preferUdp: true,
-        initialAvailableOutgoingBitrate: 1000000,
-    });
-
-    log.info({ transportId: transport.id, wsId }, 'Transport created');
-
-    //record the transports in map fro cleanup later
-    transports.set(transport.id, transport);
-
-    const list = peerTransports.get(wsId) ?? [];
-    list.push(transport.id);
-    peerTransports.set(wsId, list);
-
-    transport.on('dtlsstatechange', (dtlsState) => {
-        if (dtlsState === 'closed') {
-            log.debug({ transportId: transport.id }, 'Transport DTLS state closed, closing transport');
-            transport.close();
-            transports.delete(transport.id);
-        }
-    });
 
 
-    return {
-        id: transport.id,
-        iceParameters: transport.iceParameters,
-        iceCandidates: transport.iceCandidates,
-        dtlsParameters: transport.dtlsParameters,
-    };
-}
 
-async function connectTransport(
-        transportId:string,
-        dtlsParameters:mediasoupTypes.DtlsParameters
-    ){
-    const transport = transports.get(transportId); //get the transportid from map
-    if(!transport){
-        throw new Error('Transport not found');
-    }
-    
-    await transport.connect({dtlsParameters});
-    log.info({ transportId: transport.id }, 'Transport connected');
-}
 
 async function produce(
     wsId:string,
@@ -282,7 +189,7 @@ async function produce(
         producerOwner.delete(producer.id);
     });
 
-    log.info({ producerId: producer.id, transportId: transport.id }, 'Producer created');
+    log.info({ producerId: producer.id, transportId: transport.id, peerId: wsId, roomId }, 'Producer created');
 
     return {id: producer.id, kind: producer.kind};
 }
@@ -295,7 +202,7 @@ async function createConsumer(
     producerId:string, 
     rtpCapabilities:mediasoupTypes.RtpCapabilities
 ){
-    if(!router){
+    if(!workerManager.getRouter()){
         throw new Error('Router not initialized');
     }
 
@@ -346,7 +253,7 @@ async function cleanupPeer(wsId:string, roomId: string, wss: WebSocketServer,
                 //close the transport
                 transport.close();
                 transports.delete(transportId);
-                log.info({ transportId }, 'Transport closed');
+                log.info({ transportId, peerId: wsId }, 'Transport closed');
             }
         }
         peerTransports.delete(wsId);
@@ -362,7 +269,7 @@ async function cleanupPeer(wsId:string, roomId: string, wss: WebSocketServer,
                 producers.delete(producerId);
                 producerOwner.delete(producerId);
                 producerRoom.get(roomId)?.delete(producerId);
-                log.info({ producerId }, 'Producer closed');
+                log.info({ producerId, peerId: wsId, roomId }, 'Producer closed');
             }
         }
     }
@@ -380,7 +287,7 @@ async function cleanupPeer(wsId:string, roomId: string, wss: WebSocketServer,
         }
         broadcastToRoom(wss,rooms,roomId, hlsUnAvailMsg);
     }
-    log.info({ wsId }, 'Cleanup completed for peer');
+    log.info({ peerId: wsId, roomId }, 'Cleanup completed for peer');
 
 }
 
@@ -428,8 +335,6 @@ async function cleanupPeer(wsId:string, roomId: string, wss: WebSocketServer,
 export {
     initApp,
     getRouterRtpCapabilites,
-    createWebrtcTransport,
-    connectTransport,
     produce,
     createConsumer,
     cleanupPeer,

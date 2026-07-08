@@ -1,9 +1,13 @@
-FROM node:18-alpine
+FROM node:18-bullseye-slim
 
 WORKDIR /app
 
-# Install FFmpeg and pnpm
-RUN apt-get update && apt-get install -y ffmpeg && rm -rf /var/lib/apt/lists/*
+# Install FFmpeg + the toolchain mediasoup needs to compile its native worker
+# binary during `pnpm install` (python3, pip, make/g++ via build-essential).
+# Debian/glibc base is required: mediasoup does not support Alpine/musl.
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg python3 python3-pip build-essential \
+    && rm -rf /var/lib/apt/lists/*
 RUN npm install -g pnpm tsx typescript
 
 # Copy package files
@@ -16,7 +20,6 @@ RUN pnpm install
 COPY src ./src
 COPY public ./public
 COPY client ./client
-COPY tools ./tools
 COPY vite.config.js tsconfig.json ./
 COPY start.sh ./
 
@@ -26,8 +29,8 @@ RUN pnpm run build:client
 # Ensure start.sh is executable
 RUN chmod +x start.sh
 
-# Expose ports (3000 for server, RTC ports for mediasoup)
-EXPOSE 3000
+# Expose ports (5400 for HTTP/WS server, RTC ports for mediasoup)
+EXPOSE 5400
 EXPOSE 10000-10100/udp
 EXPOSE 10000-10100/tcp
 

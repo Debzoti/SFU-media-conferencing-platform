@@ -1,9 +1,11 @@
 
 import { WebSocket } from "ws";
+import type { Logger } from "pino";
 
 declare module "ws" {
   interface WebSocket {
     id: string; // Optional property to store a unique identifier for the WebSocket connection
+    log?: Logger; // Per-connection child logger, bound with peerId (and roomId once joined)
     WebsocketServer: typeof WebSocketServer;
   }
 
@@ -11,6 +13,7 @@ declare module "ws" {
 
 interface WebSocketWithId extends WebSocket {
   id: string; // Unique identifier for the WebSocket connection
+  log?: Logger; // Per-connection child logger, bound with peerId (and roomId once joined)
 }
 
 

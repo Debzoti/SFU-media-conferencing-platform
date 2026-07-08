@@ -5,12 +5,14 @@ services:
     build: .
     container_name: mediasoup-hls-stream
     ports:
-      - "3000:3000"
+      - "5400:5400"
       - "10000-10100:10000-10100/udp"
       - "10000-10100:10000-10100/tcp"
     environment:
       - NODE_ENV=production
-      - SERVER_URL=http://localhost:3000
+      - PORT=5400
+      - SERVER_URL=http://localhost:5400
+      - LOG_LEVEL=debug
     volumes:
       # Mount source code for development (optional, remove for production)
       - ./src:/app/src:Z

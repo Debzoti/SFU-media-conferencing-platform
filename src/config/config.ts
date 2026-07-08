@@ -54,3 +54,10 @@ export interface HLSUnavailable{
     type: 'hlsUnavailable';
     roomId: string; 
 }
+
+export interface WebRtcTransportResponse {
+    id: string;
+    iceParameters: IceParameters;
+    iceCandidates: IceCandidate[];
+    dtlsParameters: DtlsParameters;
+}

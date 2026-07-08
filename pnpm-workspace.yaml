@@ -1,6 +1,7 @@
-allowBuilds:
-  esbuild: false
-  mediasoup: false
+# mediasoup must compile its native worker binary during install, so its build
+# script has to be allowed. esbuild stays ignored: it ships a prebuilt binary via
+# its platform package and doesn't need its postinstall to run.
+onlyBuiltDependencies:
+  - mediasoup
 ignoredBuiltDependencies:
   - esbuild
-  - mediasoup
