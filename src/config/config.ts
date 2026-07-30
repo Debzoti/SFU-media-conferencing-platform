@@ -1,6 +1,8 @@
 import {ChildProcess} from 'node:child_process';
 import {types as mediasoupTypes} from 'mediasoup';
 import { HLSTranscoder } from 'src/media/hlsTranscoder';
+import { IceCandidate, IceParameters } from 'mediasoup-client/lib/Transport';
+import { DtlsParameters } from 'mediasoup/node/lib/WebRtcTransportTypes';
 
 export interface HLSConfig {
     segmentDuration: number;

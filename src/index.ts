@@ -68,6 +68,9 @@ app.get("/hls/:roomId/room-:roomId2-segment_:segmentId.ts", (req: Request, res: 
     res.sendFile(segmentPath);
 });
 
+
+/*------------------------------------------- */
+
   // Initialize WebSocket server
 const wss = new WebSocketServer({ server });
 

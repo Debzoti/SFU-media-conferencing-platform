@@ -37,12 +37,6 @@ const hlsConfig: HLSConfig = {
 let transport:mediasoupTypes.WebRtcTransport;
 let producer:mediasoupTypes.Producer<mediasoupTypes.AppData>;
 
-//manage the producers transports in map for cleanup later
-//setup rooms producer, producer ownert in map
-const producers:Map<string,mediasoupTypes.Producer<mediasoupTypes.AppData>> = new Map();
-const producerOwner:Map<string,string> = new Map(); //map producer id to socket id  
-const producerRoom : Map<string, Set<string>> = new Map(); // roomId -> Set of producer ids in that room
-
 let streamManager : StreamManager ;
 let workerManager: WorkerManager;
 /*
@@ -120,125 +114,9 @@ async function getRouterRtpCapabilites(){
 
 
 
-async function produce(
-    wsId:string,
-    transportId:string,
-    rtpParameters:mediasoupTypes.RtpParameters, 
-    kind:mediasoupTypes.MediaKind,
-    roomId: string,
-    wss : WebSocketServer,
-    rooms : {[roomId: string] : {id : string, name: string}[]}
-){
-    const transport = transports.get(transportId); //get the transportid from map
-    if(!transport){
-        throw new Error('Transport not found');
-    }
-
-    const isFirstProducer = !producerRoom.has(roomId) || producerRoom.get(roomId)!.size === 0; //chcek if its first or not 
-    //cretae producer for that transport
-    const producer = await transport.produce({
-        kind,
-        rtpParameters,
-        appData: {
-            wsId,
-        }
-    });
-
-    
-    
-    
-    //store the producer in map for cleanup later
-    producers.set(producer.id, producer);
-    producerOwner.set(producer.id, wsId);
-
-    //TODO: handle producerroom 
-    if(!producerRoom.has(roomId)){
-        producerRoom.set(roomId,new Set());
-    }
-    producerRoom.get(roomId)?.add(producer.id)
-    
-    //TODO: start hls if its the first producer
-    if(isFirstProducer){
-        try {
-            await streamManager.startHLSStream(roomId,producer,router);
-            log.info({ roomId }, 'started HLS for room');
-
-
-        } catch (error) {
-            log.error({ err: error, roomId }, 'failed to start HLS for room');
-
-        }
-        //TODO : brioadcast to all peeers in that room
-        const hlsSteamAvailableMsg : HLSStreamAvailableMessege = {
-            type : 'hlsSteamAvailable',
-            roomId: roomId,
-            playlistUrl : `${env.serverUrl}/hls/${roomId}/playlist.m3u8`,
-        }
-
-        broadcastToRoom(wss, rooms, roomId, hlsSteamAvailableMsg);
-    } 
 
 
 
-
-
-    producer.on('transportclose', () => {
-        log.debug({ producerId: producer.id }, "Producer's transport closed, closing producer");
-        producer.close();
-        producers.delete(producer.id);
-        producerOwner.delete(producer.id);
-    });
-
-    log.info({ producerId: producer.id, transportId: transport.id, peerId: wsId, roomId }, 'Producer created');
-
-    return {id: producer.id, kind: producer.kind};
-}
-
-
-//create consumers
-
-async function createConsumer(
-    recvTransportId:string, 
-    producerId:string, 
-    rtpCapabilities:mediasoupTypes.RtpCapabilities
-){
-    if(!workerManager.getRouter()){
-        throw new Error('Router not initialized');
-    }
-
-    const recvTransport = transports.get(recvTransportId); //get the transportid from map
-    if(!recvTransport){
-        throw new Error('Receive Transport not found');
-    }
-
-    const consumer = await recvTransport.consume({
-        producerId,
-        rtpCapabilities,
-        paused: false, //we want to start the consumer right away
-    });
-
-    // When consumer closed by server or transport close events, the client must handle it too.
-    consumer.on('transportclose', () => {
-        log.debug('consumer transport closed');
-    });
-    
-    consumer.on('producerclose', () => {
-        log.debug('consumer producer closed');
-    });
-
-    log.info({ consumerId: consumer.id, transportId: recvTransport.id }, 'Consumer created');
-
-    return {
-        id: consumer.id,
-        producerId: consumer.producerId,
-        kind: consumer.kind,
-        rtpParameters: consumer.rtpParameters,
-        type: consumer.type,
-        producerPaused: consumer.producerPaused,
-    };
-
-
-}
 
 //cleanup all the resources when a peer disconnects
 async function cleanupPeer(wsId:string, roomId: string, wss: WebSocketServer,
@@ -335,7 +213,6 @@ async function cleanupPeer(wsId:string, roomId: string, wss: WebSocketServer,
 export {
     initApp,
     getRouterRtpCapabilites,
-    produce,
     createConsumer,
     cleanupPeer,
     validateHLSConfig

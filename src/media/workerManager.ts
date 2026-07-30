@@ -48,7 +48,7 @@ export class WorkerManager{
 
   
   async init(): Promise<void> {
-    this.worker = await createWorker({
+    this.worker = await createWorker({ //for now a single worker we creating for MVP
         rtcMinPort: this.configData.rtcMinPort,
         rtcMaxPort: this.configData.rtcMaxPort,
         logLevel: 'warn',
