@@ -12,7 +12,7 @@ const log = childLogger("media");
 
 export class ProducerManager {
   //map producer id to socket id  
- // roomId -> Set of producer ids in that room
+  // roomId -> Set of producer ids in that room
   private producers = new Map<string, mediasoupTypes.Producer<mediasoupTypes.AppData>>();
   private producerRoom = new Map<string, Set<string>>();
   private producerOwner = new Map<string, string>();
@@ -21,7 +21,7 @@ export class ProducerManager {
     private transportManager: TransportManager,
     private workerManager: WorkerManager,
     private streamManager: StreamManager
-  ) {}
+  ) { }
 
   async produce(
     wsId: string,
@@ -114,3 +114,4 @@ export class ProducerManager {
       await broadcastToRoom(wss, rooms, roomId, hlsUnAvailMsg);
     }
   }
+}

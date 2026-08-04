@@ -11,10 +11,11 @@ import fs from 'fs';
 import { fileURLToPath } from 'url';
 import { handleSignallingMessege, handleDisconnect } from './signalling/handlers';
 import { initApp } from './media/mediaManager.js';
-import { getRouterRtpCapabilites, createWebrtcTransport } from './media/mediaManager';
+// import { getRouterRtpCapabilites, createWebrtcTransport } from './media/mediaManager';
 import { childLogger } from './tools/logger';
 import { env } from './config/binding';
 import { TransportManager } from './media/transportManager';
+import { ProducerManager } from './media/producerManager';
 
 // Listen port comes from the PORT env var (set in docker-compose), falling back
 // to 3000 for local dev. Must match the published port in docker-compose.yml.
@@ -100,7 +101,7 @@ app.post('/test-hls/:roomId', async (req, res) => {
   //each room have roomId and name
   let rooms: { [roomId: string]: { id: string; name: string }[] } = {}; 
    let socketToRoom: { [socketId: string]: number } = {}; //map to track which socket is in which room
-  const { transportManager, streamManager } = await initApp();
+  const { transportManager, producerManager, workerManager, consumerManager, streamManager } = await initApp();
 
 wss.on('connection', (ws: WebSocket) => {
         
@@ -136,12 +137,16 @@ wss.on('connection', (ws: WebSocket) => {
                 parsedData,
                 rooms, 
               socketToRoom,
-              transportManager
+              transportManager,
+              producerManager,
+              workerManager,
+              consumerManager,
+              streamManager
             );
         })
 
         ws.on('close', () =>{
-          handleDisconnect(ws as WebSocketWithId & {id : string}, wss, rooms, socketToRoom);
+          handleDisconnect(ws as WebSocketWithId & {id : string}, wss, rooms, socketToRoom, transportManager, producerManager);
         })
   });
 

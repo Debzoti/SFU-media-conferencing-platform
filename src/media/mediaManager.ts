@@ -11,15 +11,13 @@ import { types as mediasoupTypes,createWorker } from "mediasoup";
 import config from 'src/config/config.json' ;
 import {Config, HLSConfig, HLSStreamAvailableMessege, HLSUnavailable} from 'src/config/config' ;
 import { StreamManager } from "./streamManager";
-import { HLSTranscoder } from "./hlsTranscoder";
-import { broadcastToRoom } from "src/signalling/handlers";
-import { WebSocketServer } from "ws";
-import { env } from "src/config/binding";
 import path from 'path';
 
 import { childLogger } from "src/tools/logger";
 import { WorkerManager } from "./workerManager";
 import { TransportManager } from "./transportManager";
+import { ProducerManager } from "./producerManager";
+import { ConsumerManager } from "./consumerManager";
 
 const log = childLogger('media');
 
@@ -31,11 +29,6 @@ const hlsConfig: HLSConfig = {
     outputDir: path.join(process.cwd(), configData.hls.outputDir)
 };
 
-//media manager will handle all the media related tasks
-//like creating worker, router, transport, producer, consumer
-
-let transport:mediasoupTypes.WebRtcTransport;
-let producer:mediasoupTypes.Producer<mediasoupTypes.AppData>;
 
 let streamManager : StreamManager ;
 let workerManager: WorkerManager;
@@ -93,8 +86,15 @@ async function initApp() {
   
   //calling stream manager instance
   streamManager = new StreamManager(hlsConfig);
+  
+  //calling the producer manager instance
+  const producerManager = new ProducerManager(transportManager, workerManager, streamManager);
 
-  return { transportManager, streamManager };
+  //calling the consumer manager instance
+  const consumerManager = new ConsumerManager(workerManager, transportManager);
+  
+
+  return { transportManager, streamManager, producerManager, workerManager, consumerManager };
     
 }
 
@@ -118,56 +118,56 @@ async function getRouterRtpCapabilites(){
 
 
 
-//cleanup all the resources when a peer disconnects
-async function cleanupPeer(wsId:string, roomId: string, wss: WebSocketServer,
-    rooms : { [roomId: string]: { id: string; name: string }[] },
-    ){
-    //get all the transport ids for this peer
-    const transportIds = peerTransports.get(wsId);
-    if(transportIds){
-        for(const transportId of transportIds){
-            const transport = transports.get(transportId);
-            if(transport){
-                //close the transport
-                transport.close();
-                transports.delete(transportId);
-                log.info({ transportId, peerId: wsId }, 'Transport closed');
-            }
-        }
-        peerTransports.delete(wsId);
-    }
+// //cleanup all the resources when a peer disconnects
+// async function cleanupPeer(wsId:string, roomId: string, wss: WebSocketServer,
+//     rooms : { [roomId: string]: { id: string; name: string }[] },
+//     ){
+//     //get all the transport ids for this peer
+//     const transportIds = peerTransports.get(wsId);
+//     if(transportIds){
+//         for(const transportId of transportIds){
+//             const transport = transports.get(transportId);
+//             if(transport){
+//                 //close the transport
+//                 transport.close();
+//                 transports.delete(transportId);
+//                 log.info({ transportId, peerId: wsId }, 'Transport closed');
+//             }
+//         }
+//         peerTransports.delete(wsId);
+//     }
 
-    //get all the producers owned by this peer
-    for(const [producerId, ownerWsId] of producerOwner.entries()){
-        if(ownerWsId === wsId){
-            const producer = producers.get(producerId);
-            if(producer){
-                //close the producer
-                producer.close();
-                producers.delete(producerId);
-                producerOwner.delete(producerId);
-                producerRoom.get(roomId)?.delete(producerId);
-                log.info({ producerId, peerId: wsId, roomId }, 'Producer closed');
-            }
-        }
-    }
+//     //get all the producers owned by this peer
+//     for(const [producerId, ownerWsId] of producerOwner.entries()){
+//         if(ownerWsId === wsId){
+//             const producer = producers.get(producerId);
+//             if(producer){
+//                 //close the producer
+//                 producer.close();
+//                 producers.delete(producerId);
+//                 producerOwner.delete(producerId);
+//                 producerRoom.get(roomId)?.delete(producerId);
+//                 log.info({ producerId, peerId: wsId, roomId }, 'Producer closed');
+//             }
+//         }
+//     }
 
     
-    if(producerRoom.get(roomId)?.size === 0){
-        log.info({ roomId }, 'last producer leaving, stopping HLS');
+//     if(producerRoom.get(roomId)?.size === 0){
+//         log.info({ roomId }, 'last producer leaving, stopping HLS');
         
-        await streamManager.stopHLSStream(roomId);
-        producerRoom.delete(roomId);
+//         await streamManager.stopHLSStream(roomId);
+//         producerRoom.delete(roomId);
 
-        const hlsUnAvailMsg : HLSUnavailable = {
-            type: 'hlsUnavailable',
-            roomId : roomId
-        }
-        broadcastToRoom(wss,rooms,roomId, hlsUnAvailMsg);
-    }
-    log.info({ peerId: wsId, roomId }, 'Cleanup completed for peer');
+//         const hlsUnAvailMsg : HLSUnavailable = {
+//             type: 'hlsUnavailable',
+//             roomId : roomId
+//         }
+//         broadcastToRoom(wss,rooms,roomId, hlsUnAvailMsg);
+//     }
+//     log.info({ peerId: wsId, roomId }, 'Cleanup completed for peer');
 
-}
+// }
 
     function validateHLSConfig(config : HLSConfig) : HLSConfig{
         const defaults = {
@@ -213,7 +213,5 @@ async function cleanupPeer(wsId:string, roomId: string, wss: WebSocketServer,
 export {
     initApp,
     getRouterRtpCapabilites,
-    createConsumer,
-    cleanupPeer,
     validateHLSConfig
 };

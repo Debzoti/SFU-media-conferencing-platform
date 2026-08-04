@@ -1,24 +1,18 @@
 import { WebSocket, WebSocketServer } from "ws";
 import { v4 as uuidv4 } from "uuid";
 import { WebSocketWithId } from "../typings/ws";
-import {
-        initApp,
-        getRouterRtpCapabilites,
-        createWebrtcTransport,
-        connectTransport,
-            produce,
-            createConsumer,
-            cleanupPeer
-    } from "../media/mediaManager";
 import { StreamManager } from "src/media/streamManager";
 import config from "src/config/config.json";
 import { env } from "src/config/binding";
 import { childLogger } from "src/tools/logger";
 import { TransportManager } from "src/media/transportManager";
+import { ProducerManager } from "src/media/producerManager";
+import { WorkerManager } from "src/media/workerManager";
+import { ConsumerManager } from "src/media/consumerManager";
 
 const log = childLogger('signalling');
 
-let streamManager : StreamManager;
+//let streamManager : StreamManager;
 
 //handle signalling messages
 
@@ -28,7 +22,11 @@ let streamManager : StreamManager;
         parsedData: string,
         rooms: { [roomId: string]: { id: string; name: string }[] }, //room name
         socketToRoom:  { [socketId: string]: number } ,
-        transportManager : TransportManager
+        transportManager: TransportManager,
+        producerManager: ProducerManager,
+       workerManager: WorkerManager,
+      consumerManager: ConsumerManager,
+        streamManager: StreamManager
         ) => {
         const { type } = JSON.parse(parsedData);
         // Use the per-connection logger (bound with peerId in index.ts) so every
@@ -83,7 +81,7 @@ let streamManager : StreamManager;
                 );
 
                 //notify users about the avial hlsStreams in this room
-                streamManager = new StreamManager(config.hls);
+               // streamManager = new StreamManager(config.hls);
                 const hlsstream = streamManager.getSTreamStatus(roomId) ? {
                     playlistUrl : `${env.serverUrl}/hls/${roomId}/playlist.m3u8`
                 } : null;
@@ -103,11 +101,11 @@ let streamManager : StreamManager;
                 }
 
                 case "getRouterRtpCapabilities": {
-                    const rtpCaps = await getRouterRtpCapabilites();
+                    const rtpCaps = workerManager.getRouter().rtpCapabilities;
                     ws.send(
                         JSON.stringify({
                             type: "routerRtpCapabilities",
-                            payload: await rtpCaps,
+                            payload: rtpCaps,
                         })
                     );
                     return;
@@ -116,7 +114,7 @@ let streamManager : StreamManager;
                 
                 case "createWebrtcTransport": {
                     const wsId = ws.id;
-                    const transport = await createWebrtcTransport(wsId);
+                    const transport = await transportManager.createWebrtcTransport(wsId);
                     ws.send(
                         JSON.stringify({
                             type: "connectWebrtcTransportResponse",
@@ -128,7 +126,7 @@ let streamManager : StreamManager;
                 
                 case "connectTransport": {
                     const {transportId, dtlsParameters} = JSON.parse(parsedData);
-                    await connectTransport(transportId, dtlsParameters);
+                    await transportManager.connectTransport(transportId, dtlsParameters);
                     ws.send(
                         JSON.stringify({
                             type: 'connectTransportResponse',
@@ -146,7 +144,7 @@ let streamManager : StreamManager;
                     
                     //notify users about new producer
                     const roomId = socketToRoom[ws.id];
-                    const result = await produce(ws.id, transportId, rtpParameters, kind, roomId.toString(), wss, rooms);
+                    const result = await producerManager.produce(ws.id, transportId, rtpParameters, kind, roomId.toString(), wss, rooms);
                     
                     log.info({ producerId: result.id, kind }, 'Producer created');
                     
@@ -185,8 +183,8 @@ let streamManager : StreamManager;
                     const {recvTransport,producerId, rtpCapabilities} = JSON.parse(parsedData);
                     log.info({ producerId, recvTransport }, 'Consumer request');
                     try{
-                        const consumer = await createConsumer( recvTransport, producerId, rtpCapabilities);
-                        log.info({ consumerId: consumer.id, producerId }, 'Consumer created');
+                        const consumer =await consumerManager.createConsumer( recvTransport, producerId, rtpCapabilities);
+                        log.info({ consumerId: (consumer).id, producerId }, 'Consumer created');
                         ws.send(
                             JSON.stringify({
                                 type: 'createConsumerResponse',
@@ -289,10 +287,16 @@ const handleDisconnect = async (
     ws: WebSocket & {id: string},
     wss: WebSocketServer,
     rooms: { [roomId: string]: { id: string; name: string }[] },
-    socketToRoom: { [socketId: string]: number }
+  socketToRoom: { [socketId: string]: number },
+  transportManager: TransportManager,
+  producerManager:ProducerManager
+    
 ) => {
-    const roomId = socketToRoom[ws.id];
-    await cleanupPeer(ws.id, roomId.toString(), wss, rooms);
+  const roomId = socketToRoom[ws.id];
+  if(roomId != undefined){
+    transportManager.cleanupPeer(ws.id);
+    await producerManager.cleanupPeer(ws.id, roomId.toString(), wss, rooms);
+  }
 
         if(roomId && rooms[roomId]){
             rooms[roomId] = rooms[roomId].filter(user => user.id !== ws.id);
