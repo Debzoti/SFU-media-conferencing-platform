@@ -1,6 +1,7 @@
 node_modules/
 .kiro/specs/hls-live-streaming/
 *.md
+!/README.md
 /dist
 .pi/
 public/hls/
