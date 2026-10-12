@@ -2,6 +2,7 @@ import { WebRtcTransportResponse } from "src/config/config";
 import { types as mediasoupTypes } from "mediasoup";
 import { WorkerManager } from "./workerManager";
 import { logger, childLogger } from "src/tools/logger";
+import { env } from "src/config/binding";
 
 
 const log = childLogger('media');
@@ -22,7 +23,7 @@ export class TransportManager{
 
         const transport = await this.workerManager.getRouter().createWebRtcTransport({
         listenIps: [
-            {ip:'0.0.0.0',announcedIp: undefined},
+            {ip:'0.0.0.0',announcedIp: env.announcedIp || undefined},
         ],
 
         enableUdp: true,

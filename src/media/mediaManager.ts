@@ -44,7 +44,6 @@ let workerManager: WorkerManager;
             |  "peer1" -> [t1, t2]                |
             +-------------------------------------+
                     |                 |
-                    |                 |
                     v                 v
             +----------------+   +----------------+
             | transports     |   | transports     |

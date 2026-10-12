@@ -26,7 +26,7 @@
   "dependencies": {
     "dotenv": "^17.4.2",
     "express": "^5.1.0",
-    "mediasoup": "^3.20.1",
+    "mediasoup": "^3.24.0",
     "mediasoup-client": "^3.7.6",
     "pino": "^10.3.1",
     "pino-http": "^11.0.0",

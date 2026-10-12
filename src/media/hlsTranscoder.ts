@@ -43,12 +43,14 @@ class HLSTranscoder{
             '-protocol_whitelist', 'file,rtp,udp',
             
             // Video input from mediasoup PlainTransport
-            '-i', `rtp://127.0.0.1:${this.config.videoRtpPort}`,
+            '-i', this.config.sdpPath,
             
             // Audio input from mediasoup PlainTransport
-            '-i', `rtp://127.0.0.1:${this.config.audioRtpPort}`,
-            
-            // Video encoding
+            //'-i', `rtp://127.0.0.1:${this.config.audioRtpPort}`,
+          '-an', //temorary disabliing audio will do after vieo rtp testiong 
+
+          
+          // Video encoding
             '-c:v', 'libx264',
             '-preset', 'veryfast',
             '-tune', 'zerolatency',

@@ -2,3 +2,5 @@ node_modules/
 .kiro/specs/hls-live-streaming/
 *.md
 /dist
+.pi/
+public/hls/

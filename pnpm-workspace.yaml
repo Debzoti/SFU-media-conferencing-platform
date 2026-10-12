@@ -5,3 +5,6 @@ onlyBuiltDependencies:
   - mediasoup
 ignoredBuiltDependencies:
   - esbuild
+allowBuilds:
+  esbuild: false
+  mediasoup: false

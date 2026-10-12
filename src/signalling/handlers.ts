@@ -27,7 +27,7 @@ const log = childLogger('signalling');
        workerManager: WorkerManager,
       consumerManager: ConsumerManager,
         streamManager: StreamManager
-        ) => {
+        ) =>  {
         const { type } = JSON.parse(parsedData);
         // Use the per-connection logger (bound with peerId in index.ts) so every
         // line below is traceable to this peer. Fall back to a fresh child if missing.
@@ -179,6 +179,22 @@ const log = childLogger('signalling');
                     return;
                 }
 
+                // A late joiner asks for the producers that already exist in its room.
+                // We reply with the same `newProducer` message the client already handles.
+                case "getProducers": {
+                    const joinedRoomId = socketToRoom[ws.id];
+                    if (joinedRoomId === undefined) {
+                        ws.send(JSON.stringify({ error: 'Join a room first' }));
+                        return;
+                    }
+                    const existing = producerManager.getRoomProducers(joinedRoomId.toString(), ws.id);
+                    log.debug({ count: existing.length, roomId: joinedRoomId }, 'Sending existing producers to late joiner');
+                    for (const p of existing) {
+                        ws.send(JSON.stringify({ type: 'newProducer', ...p }));
+                    }
+                    return;
+                }
+
                 case "createConsumer" : {
                     const {recvTransport,producerId, rtpCapabilities} = JSON.parse(parsedData);
                     log.info({ producerId, recvTransport }, 'Consumer request');
@@ -280,7 +296,6 @@ const log = childLogger('signalling');
                 })
             )
         }
-
     }
 
 const handleDisconnect = async (

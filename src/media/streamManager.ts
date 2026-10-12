@@ -7,8 +7,31 @@ import { readdir, unlink } from "node:fs/promises";
 import path from "node:path";
 import { validateHLSConfig } from "./mediaManager";
 import { childLogger } from "src/tools/logger";
+import { writeFileSync } from "node:fs";
+
 
 const log = childLogger('stream');
+
+//helper function for building SDP files for mediasoup consumers
+export function buildVideoSdp(videoRtpPort: number, consumer : mediasoupTypes.Consumer): string {
+  const codec = consumer.rtpParameters.codecs[0];
+  if(!codec) throw new Error(`no codec from consumer ${consumer.id}`);
+  const videoCodec = codec.mimeType;
+  const payloadType = codec.payloadType;
+  const clockRate = codec.clockRate;
+
+  return [
+     'v=0',
+     'o=- 0 0 IN IP4 127.0.0.1',
+     's=mediasoup',
+     'c=IN IP4 127.0.0.1',
+     't=0 0',
+     `m=video ${videoRtpPort} RTP/AVP ${payloadType}`,
+     `a=rtpmap:${payloadType} ${videoCodec}/${clockRate}`,
+     'a=recvonly',
+   ].join('\r\n') + '\r\n';
+  
+}
 
 export class StreamManager{
     private sessions : Map<string, StreamSession>;
@@ -134,7 +157,8 @@ export class StreamManager{
         router: mediasoupTypes.Router<mediasoupTypes.AppData>
     ): Promise<void>{
 
-        //check if already streaming 
+        // Claim the room before any async work, so a concurrent call cannot
+        // allocate ports or spawn a second ffmpeg for the same room.
         if(this.sessions.has(roomId)){
             log.info({ roomId }, 'Room already has HLS stream');
             return;
@@ -146,8 +170,8 @@ export class StreamManager{
 
         //create plaintransport
         const plainTransport = await router.createPlainTransport({
-            rtcpMux : false,
-            comedia:true, 
+            rtcpMux : true,
+            comedia:false, 
             listenInfo: {
                 protocol: 'udp',
                 ip: '127.0.0.1',
@@ -161,6 +185,23 @@ export class StreamManager{
             port : videoRtpPort,
         });
 
+      //need to cosnumer to get the rtp out of plaintransport
+      const rtpConsumer = await plainTransport.consume({
+        producerId: producer.id,
+        rtpCapabilities: router.rtpCapabilities,
+        paused : true,
+      });
+
+      log.info({ rtpParams: rtpConsumer.rtpParameters }, 'consumer rtp params');
+
+      //need to handle the sdp file for diffrent rtp params
+      const sdp = buildVideoSdp(videoRtpPort, rtpConsumer);
+      log.info({ sdp }, 'sdp');
+      const sdpPath = `${this.config.outputDir}/room-${roomId}.sdp`;
+      writeFileSync(sdpPath, sdp);
+      
+
+
         //create ffmpeg config
         //start ffmpeg
         const ffmpegConfig :  FFmpegConfig = {
@@ -170,11 +211,15 @@ export class StreamManager{
             segmentDuration: this.config.segmentDuration,
             playlistSize : this.config.playlistSize,
             outputPattern : `${this.config.outputDir}/room-${roomId}-segment_%03d.ts`,
-            playlistPath: `${this.config.outputDir}/room-${roomId}-playlist.m3u8`
+            playlistPath: `${this.config.outputDir}/room-${roomId}-playlist.m3u8`,
+            sdpPath : `${this.config.outputDir}/room-${roomId}.sdp`,
         }
         const transcoder : HLSTranscoder = new HLSTranscoder(ffmpegConfig);
         const ffmpegProcess = transcoder.spawn();
 
+      await rtpConsumer.resume();
+
+      
         //save session
         this.sessions.set(roomId, {
             roomId : roomId,

@@ -15,6 +15,7 @@ let currentRoomId = null;
 let videoProducer = null;
 let audioProducer = null;
 let consumers = new Map();
+let requestedProducers = new Set(); // producerIds we've already asked to consume (avoids duplicates)
 
 button.addEventListener("click", async () => {
     const roomId = document.getElementById("roomInput").value;
@@ -183,31 +184,25 @@ async function handleTransportCreated(transportInfo) {
                     transportId: sendTransport.id,
                     dtlsParameters
                 }));
-                
-                const confirmHandler = (event) => {
-                    const data = JSON.parse(event.data);
-                    if (data.type === "connectTransportResponse" && data.payload.transportId === sendTransport.id) {
-                        ws.removeEventListener('message', confirmHandler);
-                        callback();
-                    }
-                };
-                ws.addEventListener('message', confirmHandler);
+              await waitForConfirmation(d => d.type === "connectTransportResponse" && d.payload.transportId === sendTransport.id);
+              callback();
             } catch (error) {
                 errback(error);
             }
         });
 
-        sendTransport.on('produce', async ({ kind, rtpParameters }, callback, errback) => {
-            try {
-                console.log(`🎬 Producing ${kind}...`);
-                ws.send(JSON.stringify({
-                    type: "produce",
-                    transportId: sendTransport.id,
-                    kind,
-                    rtpParameters
-                }));
+      sendTransport.on('produce', async ({ kind, rtpParameters }, callback, errback) => {
+        try {
+          console.log(`🎬 Producing ${kind}`);
+          ws.send(JSON.stringify({
+            type: "produce",
+            transportId: sendTransport.id,
+            kind,
+            rtpParameters
+          }));
 
-                callback({ id: sendTransport.id });
+          const data = await waitForConfirmation(d => d.type === "produceResponse" && d.kind === kind);
+          callback({ id: data.producerId });
             } catch (error) {
                 errback(error);
             }
@@ -235,15 +230,8 @@ async function handleTransportCreated(transportInfo) {
                     transportId: recvTransport.id,
                     dtlsParameters
                 }));
-                
-                const confirmHandler = (event) => {
-                    const data = JSON.parse(event.data);
-                    if (data.type === "connectTransportResponse" && data.payload.transportId === recvTransport.id) {
-                        ws.removeEventListener('message', confirmHandler);
-                        callback();
-                    }
-                };
-                ws.addEventListener('message', confirmHandler);
+              await waitForConfirmation(d => d.type === "connectTransportResponse" && d.payload.transportId === recvTransport.id);
+              callback(); 
             } catch (error) {
                 errback(error);
             }
@@ -254,6 +242,10 @@ async function handleTransportCreated(transportInfo) {
         });
 
         console.log("✅ Receive transport created");
+
+        // Late joiner: ask the server for producers that already exist in the room.
+        // The server replies with one `newProducer` per producer, handled below.
+        ws.send(JSON.stringify({ type: "getProducers" }));
     }
 }
 
@@ -290,6 +282,10 @@ async function handleNewProducer(data) {
         console.error("❌ Cannot consume: receive transport not ready");
         return;
     }
+
+    // A producer can be announced twice (live broadcast + getProducers reply); consume once.
+    if (requestedProducers.has(producerId)) return;
+    requestedProducers.add(producerId);
 
     ws.send(JSON.stringify({
         type: "createConsumer",
@@ -342,6 +338,7 @@ function cleanup() {
 
     consumers.forEach(consumer => consumer.close());
     consumers.clear();
+    requestedProducers.clear();
 
     if (sendTransport) {
         sendTransport.close();
@@ -405,4 +402,17 @@ function hideHLSNotification() {
     if (existing) {
         existing.remove();
     }
+}
+
+ function waitForConfirmation(match) {
+  return new Promise((res) => {
+    const handler = (event) => {
+      const data = JSON.parse(event.data);
+      if (match(data)) {
+        ws.removeEventListener("message", handler);
+        res(data);
+      }
+    }
+      ws.addEventListener("message", handler);
+  });
 }

@@ -32,6 +32,7 @@ export interface FFmpegConfig{
   playlistSize: number;      // e.g., 6
   outputPattern: string;     // e.g., "public/hls/room-123-segment_%03d.ts"
   playlistPath: string;      // e.g., "public/hls/room-123-playlist.m3u8"
+  sdpPath: string;           // e.g., "public/hls/room-123.sdp"
 }
 
 export interface StreamSession {
@@ -47,13 +48,13 @@ export interface StreamSession {
 }
 
 export interface HLSStreamAvailableMessege {
-    type: 'hlsSteamAvailable';
+    type: 'hlsStreamAvailable';
     roomId : string;
     playlistUrl : string;
 }
 
 export interface HLSUnavailable{
-    type: 'hlsUnavailable';
+    type: 'hlsStreamUnavailable';
     roomId: string; 
 }
 

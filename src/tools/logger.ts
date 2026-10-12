@@ -1,7 +1,9 @@
 import pino, { type Logger, type LoggerOptions } from 'pino';
+import { env } from '../config/binding';
 
-const isProd = process.env.NODE_ENV === 'production';
-const isTest = process.env.NODE_ENV === 'test';
+
+const isProd = env.nodeEnv === 'production';
+const isTest = env.nodeEnv === 'test';
 
 const options: LoggerOptions = {
   level: process.env.LOG_LEVEL ?? (isTest ? 'silent' : 'info'),
