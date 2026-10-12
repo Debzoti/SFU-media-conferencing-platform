@@ -1,4 +1,5 @@
-# p2p-streaming
+# SFU-media-conferencing-platform
+
 
 Video-call rooms with an HLS side-channel, built on a **mediasoup SFU**. (The name is historical — media flows through the server, not peer-to-peer.)
 
