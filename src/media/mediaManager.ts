@@ -82,12 +82,14 @@ async function initApp() {
 
   //calling the transport manager instance
   const transportManager = new TransportManager(workerManager);
-  
-  //calling stream manager instance
-  streamManager = new StreamManager(hlsConfig);
-  
-  //calling the producer manager instance
-  const producerManager = new ProducerManager(transportManager, workerManager, streamManager);
+
+  let producerManager: ProducerManager;
+  const streamManager = new StreamManager(
+      hlsConfig,
+      (producerId) => producerManager?.getVideoProducer(producerId),
+      workerManager
+  );
+  producerManager = new ProducerManager(transportManager, workerManager, streamManager);
 
   //calling the consumer manager instance
   const consumerManager = new ConsumerManager(workerManager, transportManager);

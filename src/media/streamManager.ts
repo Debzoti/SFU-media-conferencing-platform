@@ -8,6 +8,8 @@ import path from "node:path";
 import { validateHLSConfig } from "./mediaManager";
 import { childLogger } from "src/tools/logger";
 import { writeFileSync } from "node:fs";
+import { RoomHlsPipeline } from 'src/rooms/roomHlsTypes';
+import { WorkerManager } from './workerManager';
 
 
 const log = childLogger('stream');
@@ -33,21 +35,27 @@ export function buildVideoSdp(videoRtpPort: number, consumer : mediasoupTypes.Co
   
 }
 
-export class StreamManager{
+export class StreamManager implements RoomHlsPipeline {
     private sessions : Map<string, StreamSession>;
     private config : HLSConfig;
     private nextRtpPort : number;
     private allocatedPorts : Set<number>;
     private availablePorts : number[];
+    private producerLookup: (producerId: string) => mediasoupTypes.Producer<mediasoupTypes.AppData> | undefined;
+    private workerManager: WorkerManager;
+    private pendingStarts = new Set<string>();
 
-    
-    constructor(config:HLSConfig){
+    constructor(
+        config: HLSConfig,
+        producerLookup: (producerId: string) => mediasoupTypes.Producer<mediasoupTypes.AppData> | undefined,
+        workerManager: WorkerManager
+    ){
         this.config = validateHLSConfig(config);
+        this.producerLookup = producerLookup;
+        this.workerManager = workerManager;
         this.sessions = new Map<string,StreamSession>();
-        this.config = config;
-        this.nextRtpPort= config.rtpPortStart;
+        this.nextRtpPort = config.rtpPortStart;
         this.availablePorts = [];
-        //reuse and populate ports which are available
         for (let port = config.rtpPortStart; port <= config.rtpPortEnd; port++) {
             this.availablePorts.push(port);
         }
@@ -120,178 +128,154 @@ export class StreamManager{
         return this.sessions.get(roomId) || null;
     }
 
-        /**
-         * * clean up on ffmpeg failure
-         * @param roomId
-         */
 
-    private async cleanupOnFailure(roomId: string) : Promise<void> {
-        const session = this.sessions.get(roomId);
-        if(!session) return;
+    async start(roomId: string, sourceProducerId: string, generation: number): Promise<void> {
+        // Synchronous claim BEFORE any await: concurrent starts cannot both pass.
+        if (this.sessions.has(roomId) || this.pendingStarts.has(roomId)) {
+            throw new Error(`HLS session already exists for room ${roomId}`);
+        }
+        this.pendingStarts.add(roomId);
+
+        let videoRtpPort: number | undefined;
+        let audioRtpPort: number | undefined;
+        let plainTransport: mediasoupTypes.PlainTransport | undefined;
+        let rtpConsumer: mediasoupTypes.Consumer | undefined;
+        let transcoder: HLSTranscoder | undefined;
 
         try {
-            session.plainTransport.close();
-            await this.cleanupFiles(roomId);
-            this.releaseRtpPort(session.rtpPort);
-            this.releaseRtpPort(session.audioPort);
-            this.sessions.delete(roomId);
+            const producer = this.producerLookup(sourceProducerId);
+            if (!producer) {
+                throw new Error(`video producer ${sourceProducerId} not found for HLS start`);
+            }
+            const router = this.workerManager.getRouter();
+
+            videoRtpPort = this.allocateRtpPort();
+            audioRtpPort = this.allocateRtpPort();
+
+            plainTransport = await router.createPlainTransport({
+                rtcpMux: true,
+                comedia: false,
+                listenInfo: { protocol: 'udp', ip: '127.0.0.1', announcedAddress: undefined },
+            });
+            await plainTransport.connect({ ip: '127.0.0.1', port: videoRtpPort });
+
+            rtpConsumer = await plainTransport.consume({
+                producerId: producer.id,
+                rtpCapabilities: router.rtpCapabilities,
+                paused: true,
+            });
+
+            const sdp = buildVideoSdp(videoRtpPort, rtpConsumer);
+            const sdpPath = `${this.config.outputDir}/room-${roomId}.sdp`;
+            writeFileSync(sdpPath, sdp);
+
+            const ffmpegConfig: FFmpegConfig = {
+                videoRtpPort: videoRtpPort,
+                audioRtpPort: audioRtpPort,
+                videoBitrate: this.config.videoBitrate,
+                segmentDuration: this.config.segmentDuration,
+                playlistSize: this.config.playlistSize,
+                outputPattern: `${this.config.outputDir}/room-${roomId}-segment_%03d.ts`,
+                playlistPath: `${this.config.outputDir}/room-${roomId}-playlist.m3u8`,
+                sdpPath: `${this.config.outputDir}/room-${roomId}.sdp`,
+            };
+            transcoder = new HLSTranscoder(ffmpegConfig);
+            const ffmpegProcess = transcoder.spawn();
+            await rtpConsumer.resume();
+
+            this.sessions.set(roomId, {
+                roomId: roomId,
+                producerId: producer.id,
+                sourceConsumer: rtpConsumer,
+                plainTransport: plainTransport,
+                ffmpegProcess: ffmpegProcess,
+                trancoderInstance: transcoder,
+                rtpPort: videoRtpPort,
+                audioPort: audioRtpPort,
+                startTime: new Date(),
+                status: 'active',
+                generation: generation,
+                terminatedByUs: false,
+            });
+            this.watchFfmpeg(roomId, ffmpegProcess);
+            log.info({ roomId, sourceProducerId, videoRtpPort, generation }, 'HLS pipeline started');
         } catch (error) {
-            log.error({ err: error, roomId }, 'Error during cleanup');
-
+            // Teardown partial resources, then rethrow — honest rejection.
+            if (transcoder) { try { await transcoder.terminate(); } catch { /* best effort */ } }
+            rtpConsumer?.close();
+            plainTransport?.close();
+            if (videoRtpPort !== undefined) this.releaseRtpPort(videoRtpPort);
+            if (audioRtpPort !== undefined) this.releaseRtpPort(audioRtpPort);
+            try { await this.cleanupFiles(roomId); } catch { /* best effort */ }
+            log.error({ err: error, roomId }, 'HLS start failed');
+            throw error;
+        } finally {
+            this.pendingStarts.delete(roomId);
         }
-    
     }
 
-
-
-    /**
-     * * start the HLS streaming 
-     * @param roomId 
-     * @param producer 
-     * @param router 
-     */
-
-    async startHLSStream(
-        roomId:string,
-        producer : mediasoupTypes.Producer<mediasoupTypes.AppData>,
-        router: mediasoupTypes.Router<mediasoupTypes.AppData>
-    ): Promise<void>{
-
-        // Claim the room before any async work, so a concurrent call cannot
-        // allocate ports or spawn a second ffmpeg for the same room.
-        if(this.sessions.has(roomId)){
-            log.info({ roomId }, 'Room already has HLS stream');
-            return;
-        }
-
-        //get free rtp ports
-        const videoRtpPort = this.allocateRtpPort();
-        const audioRtpPort = this.allocateRtpPort();
-
-        //create plaintransport
-        const plainTransport = await router.createPlainTransport({
-            rtcpMux : true,
-            comedia:false, 
-            listenInfo: {
-                protocol: 'udp',
-                ip: '127.0.0.1',
-                announcedAddress: undefined
-            }
-        });
-
-        //connect producer to plain transport
-        await plainTransport.connect({
-            ip: '127.0.0.1',
-            port : videoRtpPort,
-        });
-
-      //need to cosnumer to get the rtp out of plaintransport
-      const rtpConsumer = await plainTransport.consume({
-        producerId: producer.id,
-        rtpCapabilities: router.rtpCapabilities,
-        paused : true,
-      });
-
-      log.info({ rtpParams: rtpConsumer.rtpParameters }, 'consumer rtp params');
-
-      //need to handle the sdp file for diffrent rtp params
-      const sdp = buildVideoSdp(videoRtpPort, rtpConsumer);
-      log.info({ sdp }, 'sdp');
-      const sdpPath = `${this.config.outputDir}/room-${roomId}.sdp`;
-      writeFileSync(sdpPath, sdp);
-      
-
-
-        //create ffmpeg config
-        //start ffmpeg
-        const ffmpegConfig :  FFmpegConfig = {
-            videoRtpPort : videoRtpPort,
-            audioRtpPort:audioRtpPort,
-            videoBitrate : this.config.videoBitrate,
-            segmentDuration: this.config.segmentDuration,
-            playlistSize : this.config.playlistSize,
-            outputPattern : `${this.config.outputDir}/room-${roomId}-segment_%03d.ts`,
-            playlistPath: `${this.config.outputDir}/room-${roomId}-playlist.m3u8`,
-            sdpPath : `${this.config.outputDir}/room-${roomId}.sdp`,
-        }
-        const transcoder : HLSTranscoder = new HLSTranscoder(ffmpegConfig);
-        const ffmpegProcess = transcoder.spawn();
-
-      await rtpConsumer.resume();
-
-      
-        //save session
-        this.sessions.set(roomId, {
-            roomId : roomId,
-            producerId : producer.id,
-            plainTransport : plainTransport,
-            ffmpegProcess : ffmpegProcess ,
-            trancoderInstance : transcoder,
-            rtpPort : videoRtpPort,
-            audioPort : audioRtpPort,
-            startTime : new Date(),
-            status: 'active'
-        });
-        
-        log.info({ roomId, videoRtpPort, audioRtpPort }, 'Started HLS stream for room');
-
-        ffmpegProcess.on('exit', (code, signal) =>{
-            log.error({ roomId, code, signal }, 'ffmpeg crashed for room, cleaning up');
-            
-            //update sessohns status
-            const session = this.sessions.get(roomId);
-            if(session){
-                session.status = 'failed';
-            }
-        })
-    }
-
-
-    
-    /**
-     * * stop the HLS streaming 
-     * @param roomId 
-     */
-    
-    async stopHLSStream(roomId : string): Promise<void>{
-        //get session
+    async switchSource(roomId: string, sourceProducerId: string, generation: number): Promise<void> {
         const session = this.sessions.get(roomId);
-
-        if(!session){
-            log.info({ roomId }, 'no HLS stream found in the room');
-            return;
+        if (!session) {
+            throw new Error(`cannot switch HLS source: no session for room ${roomId}`);
         }
-        //chnage the streamn status
+        // Controlled restart: full teardown of the old pipeline, then a
+        // fresh build for the new producer (playlist URL unchanged).
+        await this.teardownSession(session);
+        this.sessions.delete(roomId);
+        await this.start(roomId, sourceProducerId, generation);
+    }
+
+    async stop(roomId: string, generation: number): Promise<void> {
+        const session = this.sessions.get(roomId);
+        if (!session) {
+            log.info({ roomId, generation }, 'HLS stop requested but no session exists');
+            return; // idempotent
+        }
         session.status = 'stopping';
+        await this.teardownSession(session);
+        this.sessions.delete(roomId);
+        log.info({ roomId, generation }, 'HLS pipeline stopped');
+    }
 
-        //terminate ffmpeg preocess
-        let transcoder = session.trancoderInstance;
-        await transcoder.terminate();
-
-        //close plaintransport
-        let plainTransport = session.plainTransport;
-        plainTransport.close();
-        
-        //cleanup files
-        await this.cleanupFiles(session.roomId);
-
-        //release ports
-
+    // Shared teardown for stop/switch: ffmpeg first (it holds files/ports),
+    // then consumer, transport, ports, files.
+    private async teardownSession(session: StreamSession): Promise<void> {
+        session.terminatedByUs = true;
+        try { await session.trancoderInstance.terminate(); } catch { /* best effort */ }
+        session.sourceConsumer.close();
+        session.plainTransport.close();
         this.releaseRtpPort(session.rtpPort);
         this.releaseRtpPort(session.audioPort);
-        //remove from map
-        this.sessions.delete(roomId);
+        await this.cleanupFiles(session.roomId);
+    }
 
-        log.info({ roomId }, 'stopped HLS streaming for room');
-
+    private watchFfmpeg(roomId: string, ffmpegProcess: ChildProcess): void {
+        ffmpegProcess.on('exit', (code, signal) => {
+            const session = this.sessions.get(roomId);
+            if (session && !session.terminatedByUs) {
+                session.status = 'failed';
+                log.error({ roomId, code, signal }, 'ffmpeg crashed for room');
+            } else {
+                log.info({ roomId, code, signal }, 'ffmpeg exited (intentional)');
+            }
+        });
     }
 
 
     /**
-     * * for cleaning up after ffmpeg crash 
-     * things to clean are 
+     * * start the HLS streaming (legacy entry point; deleted in A9)
      */
-    
+    async startHLSStream(roomId: string, producer: mediasoupTypes.Producer<mediasoupTypes.AppData>, _router: mediasoupTypes.Router<mediasoupTypes.AppData>): Promise<void> {
+        await this.start(roomId, producer.id, 0);
+    }
+
+
+    /**
+     * * stop the HLS streaming (legacy entry point; deleted in A9)
+     */
+    async stopHLSStream(roomId: string): Promise<void> {
+        await this.stop(roomId, 0);
+    }
+
 }
-
-

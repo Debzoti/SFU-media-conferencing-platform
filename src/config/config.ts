@@ -3,6 +3,7 @@ import {types as mediasoupTypes} from 'mediasoup';
 import { HLSTranscoder } from 'src/media/hlsTranscoder';
 import { IceCandidate, IceParameters } from 'mediasoup-client/lib/Transport';
 import { DtlsParameters } from 'mediasoup/node/lib/WebRtcTransportTypes';
+import { RoomHlsStatus } from 'src/rooms/roomHlsTypes';
 
 export interface HLSConfig {
     segmentDuration: number;
@@ -38,13 +39,16 @@ export interface FFmpegConfig{
 export interface StreamSession {
     roomId: string;
     producerId: string;
+    sourceConsumer: mediasoupTypes.Consumer;   // NEW: the HLS source binding
     plainTransport: mediasoupTypes.PlainTransport;
     ffmpegProcess: ChildProcess;
     trancoderInstance : HLSTranscoder;
     rtpPort: number;
     audioPort : number,
     startTime: Date;
-    status: 'starting' | 'active' | 'stopping' | 'failed';
+    status: Exclude<RoomHlsStatus, 'idle'>;    // widened (adds 'switching')
+    generation: number;                        // NEW: decision epoch of this pipeline
+    terminatedByUs: boolean;                   // NEW: true when ffmpeg exit is intentional
 }
 
 export interface HLSStreamAvailableMessege {

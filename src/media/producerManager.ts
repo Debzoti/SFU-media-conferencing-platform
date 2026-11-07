@@ -83,6 +83,12 @@ export class ProducerManager {
     return { id: producer.id, kind: producer.kind };
   }
 
+  // Resolve a producer id to a live VIDEO producer (HLS sources are video-only).
+  getVideoProducer(producerId: string): mediasoupTypes.Producer<mediasoupTypes.AppData> | undefined {
+      const producer = this.producers.get(producerId);
+      return producer && producer.kind === 'video' ? producer : undefined;
+  }
+
   // producers already live in a room (so a late joiner can consume them),
   // skipping the ones owned by `excludeWsId` (a peer never consumes its own media)
   getRoomProducers(roomId: string, excludeWsId: string) {
