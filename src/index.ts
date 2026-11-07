@@ -46,7 +46,7 @@ app.get("/hls/:roomId/playlist.m3u8",(req : Request, res: Response) =>{
 
     res.setHeader('Content-Type', 'application/vnd.apple.mpegurl');
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.sendFile(playlistPath);
+    return res.sendFile(playlistPath);
 })
 
 // FFmpeg writes segments flat as room-<id>-segment_NNN.ts next to the playlist,
@@ -66,7 +66,7 @@ app.get("/hls/:roomId/room-:roomId2-segment_:segmentId.ts", (req: Request, res: 
     
     res.setHeader('Content-Type', 'video/mp2t');
     res.setHeader('Access-Control-Allow-Origin', '*');
-    res.sendFile(segmentPath);
+    return res.sendFile(segmentPath);
 });
 
 

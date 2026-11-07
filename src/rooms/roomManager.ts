@@ -25,6 +25,18 @@ export class RoomManager {
       return { nextState: state, action: { type: 'NOOP' } };
     }
 
+    // Record the durable tombstone before dispatch, so even a NOOP
+    // decision carries it forward and a closed producer can never be
+    // selected again from a stale registry snapshot.
+    if (event.type === 'VIDEO_CLOSED') {
+      state = {
+        ...state,
+        closedProducerIds: state.closedProducerIds.includes(event.producerId)
+          ? state.closedProducerIds
+          : [...state.closedProducerIds, event.producerId],
+      };
+    }
+
     switch (state.status) {
       // No pipeline exists, or the last one failed and was cleaned up:
       // the oldest live video candidate may start a new one.

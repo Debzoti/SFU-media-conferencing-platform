@@ -1,6 +1,9 @@
 // Logical (decision-only) types for the room-owned HLS state machine.
 // No mediasoup/ffmpeg objects belong here: these must stay testable
 // without a Worker, Router or ffmpeg process.
+//
+// Emitter contract: emitters must update the producer registry BEFORE
+// emitting VIDEO_ADDED / VIDEO_CLOSED.
 
 export type RoomHlsStatus =
   | 'idle' // no HLS pipeline exists
@@ -22,9 +25,17 @@ export interface RoomHlsState {
   // reject async completions whose generation does not match, so a
   // stale result can never clobber a newer pipeline.
   generation: number;
+
+  // Durable tombstone: every producer named by a VIDEO_CLOSED event is
+  // permanently unselectable for this room, even if a registry snapshot
+  // still lists it.
+  closedProducerIds: string[];
 }
 
 export interface VideoCandidate {
+  // Only video producers can ever be HLS candidates; the producer registry
+  // must filter when building candidates.
+  kind: 'video';
   producerId: string;
   createdAt: number;
 
@@ -67,4 +78,27 @@ export type RoomHlsAction =
 export interface HlsDecision {
   nextState: RoomHlsState;
   action: RoomHlsAction;
+}
+
+// Ports the coordinator depends on. Implementations live outside the
+// decision layer (ProducerManager, StreamManager, a broadcast adapter).
+export interface VideoSourceCatalog {
+  // Current video candidates for a room. The implementation must update
+  // the producer registry BEFORE emitting events (emitter contract).
+  listVideoCandidates(roomId: string): VideoCandidate[];
+}
+
+export interface RoomHlsPipeline {
+  // Effects. Resolve on success; reject on failure — never swallow.
+  // Every effect must clean up the previous pipeline (controlled restart).
+  start(roomId: string, sourceProducerId: string, generation: number): Promise<void>;
+  switchSource(roomId: string, sourceProducerId: string, generation: number): Promise<void>;
+  stop(roomId: string, generation: number): Promise<void>;
+}
+
+export interface RoomHlsNotifier {
+  // available: broadcast hlsStreamAvailable (the adapter builds the playlist URL from env).
+  // unavailable: broadcast hlsStreamUnavailable.
+  available(roomId: string): Promise<void>;
+  unavailable(roomId: string): Promise<void>;
 }

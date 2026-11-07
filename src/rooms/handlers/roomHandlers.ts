@@ -3,18 +3,18 @@ import { RoomHlsEvent, RoomHlsState, VideoCandidate, HlsDecision } from "../room
 /**
  * Oldest-first candidate selection.
  *
- * `excludeProducerId` is the tombstone rule: a producer named by a close
- * event is never selectable again, even if a stale registry snapshot still
- * lists it. `.filter` copies, so the caller's array is never mutated and
- * this stays pure.
+ * `closedProducerIds` is the durable tombstone rule: a producer named by a
+ * close event is never selectable again, even if a stale registry snapshot
+ * still lists it. `.filter` copies, so the caller's array is never mutated
+ * and this stays pure.
  */
 export function pickReplacement(
   candidates: VideoCandidate[],
-  excludeProducerId?: string
+  closedProducerIds: string[]
 ): VideoCandidate | null {
   return (
     candidates
-      .filter((candidate) => candidate.producerId !== excludeProducerId)
+      .filter((candidate) => !closedProducerIds.includes(candidate.producerId))
       .filter(candidate => !candidate.paused)
       .sort((a, b) => a.createdAt - b.createdAt)[0] ?? null
   );
@@ -36,7 +36,7 @@ export function handleIdle(
     return { nextState: state, action: { type: 'NOOP' } };
   }
 
-  const replacement = pickReplacement(candidates);
+  const replacement = pickReplacement(candidates, state.closedProducerIds);
   if (!replacement) {
     return { nextState: state, action: { type: 'NOOP' } };
   }
@@ -73,9 +73,9 @@ export function handleActive(
     return { nextState: state, action: { type: 'NOOP' } };
   }
 
-  // Tombstone rule: exclude by the event's producer id, not the state's —
-  // the event is the authoritative fact even if the registry lags.
-  const replacement = pickReplacement(candidates, event.producerId);
+  // Tombstone rule: closed producers are filtered by the durable set in
+  // the state — this event's producer id is already recorded there.
+  const replacement = pickReplacement(candidates, state.closedProducerIds);
 
   if (replacement) {
     return {

@@ -53,7 +53,7 @@ export class ProducerManager {
     const isFirstProducer = !this.producerRoom.has(roomId) || this.producerRoom.get(roomId)!.size === 0;
     this.producerRoom.get(roomId)?.add(producer.id);
 
-    // start hls if its the first producer
+    // start hls if its the first producer--> its ditched bro  
     if (isFirstProducer) {
       try {
         await this.streamManager.startHLSStream(roomId, producer, this.workerManager.getRouter());
