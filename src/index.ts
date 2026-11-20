@@ -101,7 +101,7 @@ app.post('/test-hls/:roomId', async (req, res) => {
   //each room have roomId and name
   let rooms: { [roomId: string]: { id: string; name: string }[] } = {}; 
    let socketToRoom: { [socketId: string]: number } = {}; //map to track which socket is in which room
-  const { transportManager, producerManager, workerManager, consumerManager, streamManager } = await initApp();
+  const { transportManager, producerManager, workerManager, consumerManager, streamManager } = await initApp({ wss, rooms });
 
 wss.on('connection', (ws: WebSocket) => {
         

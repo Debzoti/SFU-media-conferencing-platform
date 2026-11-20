@@ -1,0 +1,7 @@
+node_modules/
+.git/
+.pi/
+dist/
+public/hls/
+*.md
+pnpm-lock.yaml.bak

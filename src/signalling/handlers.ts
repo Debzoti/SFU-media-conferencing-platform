@@ -144,7 +144,7 @@ const log = childLogger('signalling');
                     
                     //notify users about new producer
                     const roomId = socketToRoom[ws.id];
-                    const result = await producerManager.produce(ws.id, transportId, rtpParameters, kind, roomId.toString(), wss, rooms);
+                    const result = await producerManager.produce(ws.id, transportId, rtpParameters, kind, roomId.toString());
                     
                     log.info({ producerId: result.id, kind }, 'Producer created');
                     
@@ -310,7 +310,7 @@ const handleDisconnect = async (
   const roomId = socketToRoom[ws.id];
   if(roomId != undefined){
     transportManager.cleanupPeer(ws.id);
-    await producerManager.cleanupPeer(ws.id, roomId.toString(), wss, rooms);
+    await producerManager.cleanupPeer(ws.id, roomId.toString());
   }
 
         if(roomId && rooms[roomId]){

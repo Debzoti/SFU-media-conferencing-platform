@@ -1,26 +1,24 @@
-import { WebSocketServer } from "src/typings/ws";
 import { types as mediasoupTypes } from "mediasoup";
 import { childLogger } from "src/tools/logger";
-import { StreamManager } from "./streamManager";
-import { HLSStreamAvailableMessege, HLSUnavailable } from "src/config/config";
-import { broadcastToRoom } from "src/signalling/handlers";
-import { env } from "src/config/binding";
 import { TransportManager } from "./transportManager";
 import { WorkerManager } from "./workerManager";
+import { RoomHlsCoordinator } from "src/rooms/roomHlsCoordinator";
+import { VideoCandidate, VideoSourceCatalog } from "src/rooms/roomHlsTypes";
 
 const log = childLogger("media");
 
-export class ProducerManager {
+export class ProducerManager implements VideoSourceCatalog {
   //map producer id to socket id
   // roomId -> Set of producer ids in that room
   private producers = new Map<string, mediasoupTypes.Producer<mediasoupTypes.AppData>>();
   private producerRoom = new Map<string, Set<string>>();
   private producerOwner = new Map<string, string>();
+  private producerCreatedAt = new Map<string, number>();
+  hlsCoordinator?: RoomHlsCoordinator;
 
   constructor(
     private transportManager: TransportManager,
-    private workerManager: WorkerManager,
-    private streamManager: StreamManager
+    private workerManager: WorkerManager
   ) { }
 
   async produce(
@@ -28,9 +26,7 @@ export class ProducerManager {
     transportId: string,
     rtpParameters: mediasoupTypes.RtpParameters,
     kind: mediasoupTypes.MediaKind,
-    roomId: string,
-    wss: WebSocketServer,
-    rooms: { [roomId: string]: { id: string; name: string }[] }
+    roomId: string
   ) {
     const transport = this.transportManager.getTransport(transportId);
     if (!transport) {
@@ -47,35 +43,22 @@ export class ProducerManager {
     this.producers.set(producer.id, producer);
     this.producerOwner.set(producer.id, wsId);
 
-    if (this.producerRoom.has(roomId)) { //add to the producer oom if it has a roomId
+    if (!this.producerRoom.has(roomId)) { // create the room's producer set on its first producer
       this.producerRoom.set(roomId, new Set());
     }
-    const isFirstProducer = !this.producerRoom.has(roomId) || this.producerRoom.get(roomId)!.size === 0;
     this.producerRoom.get(roomId)?.add(producer.id);
 
-    // start hls if its the first producer--> its ditched bro  
-    if (isFirstProducer) {
-      try {
-        await this.streamManager.startHLSStream(roomId, producer, this.workerManager.getRouter());
-        log.info({ roomId }, 'started HLS for room');
-      } catch (error) {
-        log.error({ err: error, roomId }, 'failed to start HLS for room');
-      }
+    this.producerCreatedAt.set(producer.id, Date.now());
+    await this.hlsCoordinator?.handle({ type: "VIDEO_ADDED", roomId, producerId: producer.id });
 
-      const hlsStreamAvailableMsg: HLSStreamAvailableMessege = {
-        type: 'hlsStreamAvailable',
-        roomId: roomId,
-        playlistUrl: `${env.serverUrl}/hls/${roomId}/playlist.m3u8`,
-      };
-      broadcastToRoom(wss, rooms, roomId, hlsStreamAvailableMsg);
-    }
-
-    producer.on('transportclose', () => {
+    producer.on('transportclose', async () => {
       log.debug({ producerId: producer.id }, "Producer's transport closed, closing producer");
       producer.close();
       this.producers.delete(producer.id);
       this.producerOwner.delete(producer.id);
       this.producerRoom.get(roomId)?.delete(producer.id);
+      this.producerCreatedAt.delete(producer.id);
+      await this.hlsCoordinator?.handle({ type: "VIDEO_CLOSED", roomId, producerId: producer.id });
     });
 
     log.info({ producerId: producer.id, transportId: transport.id, peerId: wsId, roomId }, 'Producer created');
@@ -102,31 +85,26 @@ export class ProducerManager {
     return result;
   }
 
-  // close all producers owned by a peer; stops HLS if this was the room's last producer
-  /*
-  TODO: a bug here details
-  ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
-   `handleDisconnect` calls `transportManager.cleanupPeer(ws.id)` first, then `await producerManager.cleanupPeer(...)`.
-   Closing a transport makes each of its producers emit `transportclose`, whose handler (in `produce`) deletes the producer
-   from `producers` and `producerOwner`. Assuming that emit is synchronous, what does `producerManager.cleanupPeer` then do
-   for that peer?
+  // VideoSourceCatalog: current video candidates for a room, for the coordinator.
+  listVideoCandidates(roomId: string): VideoCandidate[] {
+      const result: VideoCandidate[] = [];
+      for (const producerId of this.producerRoom.get(roomId) ?? []) {
+          const producer = this.producers.get(producerId);
+          if (!producer || producer.kind !== "video") continue;
+          result.push({
+              kind: "video",
+              producerId,
+              createdAt: this.producerCreatedAt.get(producerId) ?? 0,
+          });
+      }
+      return result;
+  }
 
-   ✗ 1. Loops over the peer's producers as usual, closes them again, and stops HLS when the room empties
-     2. Stops HLS anyway, because the room's peer list is empty after the disconnect
-   ✓ 3. Finds no entries in producerOwner, so producerRoom still holds the ids and HLS is never stopped
-     4. Throws because producer.close() is called on an already-closed producer
-
-   ✗ Incorrect.
-   Correct answer: 3. Finds no entries in producerOwner, so producerRoom still holds the ids and HLS is never stopped
-
-   The loop iterates producerOwner, which the transportclose handler already emptied. producerRoom (never touched by that
-   handler) still has the ids, so size stays > 0 and stopHLSStream never runs. A likely real bug to fix when you resume.
-  */
+  // close all producers owned by a peer; emits VIDEO_CLOSED for each so the
+  // coordinator can decide whether to switch/stop the room's HLS pipeline.
   async cleanupPeer(
     wsId: string,
-    roomId: string,
-    wss: WebSocketServer,
-    rooms: { [roomId: string]: { id: string; name: string }[] }
+    roomId: string
   ): Promise<void> {
     for (const [producerId, ownerWsId] of this.producerOwner.entries()) {
       if (ownerWsId === wsId) {
@@ -136,21 +114,15 @@ export class ProducerManager {
           this.producers.delete(producerId);
           this.producerOwner.delete(producerId);
           this.producerRoom.get(roomId)?.delete(producerId);
+          this.producerCreatedAt.delete(producerId);
+          await this.hlsCoordinator?.handle({ type: "VIDEO_CLOSED", roomId, producerId });
           log.info({ producerId, peerId: wsId, roomId }, 'Producer closed');
         }
       }
     }
 
     if (this.producerRoom.get(roomId)?.size === 0) {
-      log.info({ roomId }, 'last producer leaving, stopping HLS');
-      await this.streamManager.stopHLSStream(roomId);
       this.producerRoom.delete(roomId);
-
-      const hlsUnAvailMsg: HLSUnavailable = {
-        type: 'hlsStreamUnavailable',
-        roomId: roomId,
-      };
-      await broadcastToRoom(wss, rooms, roomId, hlsUnAvailMsg);
     }
   }
 }

@@ -262,20 +262,4 @@ export class StreamManager implements RoomHlsPipeline {
         });
     }
 
-
-    /**
-     * * start the HLS streaming (legacy entry point; deleted in A9)
-     */
-    async startHLSStream(roomId: string, producer: mediasoupTypes.Producer<mediasoupTypes.AppData>, _router: mediasoupTypes.Router<mediasoupTypes.AppData>): Promise<void> {
-        await this.start(roomId, producer.id, 0);
-    }
-
-
-    /**
-     * * stop the HLS streaming (legacy entry point; deleted in A9)
-     */
-    async stopHLSStream(roomId: string): Promise<void> {
-        await this.stop(roomId, 0);
-    }
-
 }

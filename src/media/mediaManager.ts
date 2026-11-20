@@ -18,6 +18,10 @@ import { WorkerManager } from "./workerManager";
 import { TransportManager } from "./transportManager";
 import { ProducerManager } from "./producerManager";
 import { ConsumerManager } from "./consumerManager";
+import type { WebSocketServer } from 'ws';
+import { RoomManager } from 'src/rooms/roomManager';
+import { RoomHlsCoordinator } from 'src/rooms/roomHlsCoordinator';
+import { RoomHlsNotifierAdapter } from './hlsNotifier';
 
 const log = childLogger('media');
 
@@ -74,7 +78,7 @@ let workerManager: WorkerManager;
 
 //initialize the media manager
 
-async function initApp() {
+async function initApp(signalling: { wss: WebSocketServer; rooms: { [roomId: string]: { id: string; name: string }[] } }) {
 
   //use the workerManager instance and pull router
   workerManager = new WorkerManager(config)
@@ -89,13 +93,18 @@ async function initApp() {
       (producerId) => producerManager?.getVideoProducer(producerId),
       workerManager
   );
-  producerManager = new ProducerManager(transportManager, workerManager, streamManager);
+  producerManager = new ProducerManager(transportManager, workerManager);
 
   //calling the consumer manager instance
   const consumerManager = new ConsumerManager(workerManager, transportManager);
-  
 
-  return { transportManager, streamManager, producerManager, workerManager, consumerManager };
+  // Room-owned HLS state machine: coordinator drives start/switch/stop, producerManager emits events.
+  const roomManager = new RoomManager();
+  const notifier = new RoomHlsNotifierAdapter(signalling.wss, signalling.rooms);
+  const hlsCoordinator = new RoomHlsCoordinator(roomManager, producerManager, streamManager, notifier);
+  producerManager.hlsCoordinator = hlsCoordinator; // phase 2 — breaks the cycle
+
+  return { transportManager, streamManager, producerManager, workerManager, consumerManager, hlsCoordinator };
     
 }
 
@@ -119,56 +128,6 @@ async function getRouterRtpCapabilites(){
 
 
 
-// //cleanup all the resources when a peer disconnects
-// async function cleanupPeer(wsId:string, roomId: string, wss: WebSocketServer,
-//     rooms : { [roomId: string]: { id: string; name: string }[] },
-//     ){
-//     //get all the transport ids for this peer
-//     const transportIds = peerTransports.get(wsId);
-//     if(transportIds){
-//         for(const transportId of transportIds){
-//             const transport = transports.get(transportId);
-//             if(transport){
-//                 //close the transport
-//                 transport.close();
-//                 transports.delete(transportId);
-//                 log.info({ transportId, peerId: wsId }, 'Transport closed');
-//             }
-//         }
-//         peerTransports.delete(wsId);
-//     }
-
-//     //get all the producers owned by this peer
-//     for(const [producerId, ownerWsId] of producerOwner.entries()){
-//         if(ownerWsId === wsId){
-//             const producer = producers.get(producerId);
-//             if(producer){
-//                 //close the producer
-//                 producer.close();
-//                 producers.delete(producerId);
-//                 producerOwner.delete(producerId);
-//                 producerRoom.get(roomId)?.delete(producerId);
-//                 log.info({ producerId, peerId: wsId, roomId }, 'Producer closed');
-//             }
-//         }
-//     }
-
-    
-//     if(producerRoom.get(roomId)?.size === 0){
-//         log.info({ roomId }, 'last producer leaving, stopping HLS');
-        
-//         await streamManager.stopHLSStream(roomId);
-//         producerRoom.delete(roomId);
-
-//         const hlsUnAvailMsg : HLSUnavailable = {
-//             type: 'hlsUnavailable',
-//             roomId : roomId
-//         }
-//         broadcastToRoom(wss,rooms,roomId, hlsUnAvailMsg);
-//     }
-//     log.info({ peerId: wsId, roomId }, 'Cleanup completed for peer');
-
-// }
 
     function validateHLSConfig(config : HLSConfig) : HLSConfig{
         const defaults = {
